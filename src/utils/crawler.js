@@ -1,3 +1,19 @@
+const startCrawlingProcess = require('../index');
+const {
+    doesKeyExistInRedis,
+    getHashValuesFromRedis,
+    getHashValFromRedis,
+    incHashIntValInRedis,
+    setHashStrValInRedis,
+    getStrValFromRedis,
+    setStrWithExInRedis
+} = require('./redis');
+const {
+    sendMessageToQueue,
+    pollMessagesFromQueue,
+    deleteMessagesFromQueue
+} = require('./sqs');
+
 //  data about particular search, shared by all workers through redis
 // queueUrl-worker: {                       
 //      workersCounter: number              
@@ -111,9 +127,13 @@ const processMessage = async (message, queueUrl) => {
 const crawl = async (queueUrl) => {
     const queueRedisHashKey = `${queueUrl}-workers`;
     const allQueueHashFields = ['workersCounter', 'isCrawlingDone', 'currentLevel', 'pageCounter', 'maxPages', 'maxLevel', 'workersReachedNextLevelCounter', 'tree'];
-    
+
     try {
+        let doesQueueHashExist = await doesKeyExistInRedis(queueRedisHashKey);
+        if (!doesQueueHashExist) throw new Error(`${queueUrl}-workers does not exist in redis`);
+
         const [currentLevel, maxPages, maxLevel] = await getHashValuesFromRedis(queueRedisHashKey, [allQueueHashFields[2], allQueueHashFields[4], allQueueHashFields[5]]);
+        if (currentLevel == null) throw new Error('current level in queueUrl-workers hash is null');
 
         const crawlRecursive = async () => {
             // If other crawlers finished the scraping
@@ -124,7 +144,7 @@ const crawl = async (queueUrl) => {
             }
     
             const messages = await pollMessagesFromQueue(queueUrl);
-            
+
             if (messages.length === 0) {
                 await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[1], 'true');
                 // TODO: restart interval to find new queue
@@ -147,117 +167,17 @@ const crawl = async (queueUrl) => {
 
         await crawlRecursive();
     } catch (err) {
+        console.log(err);
+
         try {
             await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[0], -1);
+            // TODO restart interval to find new queue
         } catch (error) {
             console.log(error);
+            throw new Error({ err, error });
         }
-        console.log(err);
-        throw new Error(err.message);
+        throw new Error(err);
     }
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-const crawl = async (queueUrl) => {
-    try {
-        // TODO: if isCrawlingDone for this queue in redis is true exit
-        // if (redis.get(crawlingDone + queueUrl)) return; // Exit condition
-
-        const messages = await pollMessagesFromQueue(queueUrl);
-        if (messages.length === 0) return; // Exit condition
-
-        for (let message of messages) {
-            // let currentLevel = message.attr.groupId;
-            // let pageCounter = await redis.get(queueUrl + '-pageCounter');
-
-            // TODO: if message counter attr matches maxPages than break and change crawlingDone in redis to true
-            // if (pageCounter >== maxPages || currentLevel >== maxDepth) {
-            //      await redis.set(crawlingDone + queueUrl, true));
-            //      break;
-            // }
-
-            let url = message.Body;
-            let parentUrl = message.attr.parentUrl;
-
-            // TODO: look for page obj in redis, if it exists than continue
-            // TODO: save page obj in redis ([key: url, value: JSON(pageObj)])
-            // let page = await redis.get(url);
-            // if (!page) {
-            //      page = await getPageInfo();
-            //      await redis.set(url, page);
-            // }
-
-            // TODO: add url (message) to queueUrl tree
-            let treeJSON = await redis.get(queueUrl + '-tree');
-            let newPageJSON = JSON.stringify({
-                title: page.title,
-                level: currentLevel,
-                url,
-                children: []
-            });
-            let searchString = `${parentUrl}","children":[`;
-            let insertIndex = treeJSON.indexOf(searchString) + searchString.length;
-            if (treeJSON[insertIndex] === '{') newPageJSON += ',';
-            treeJSON = treeJSON.slice(0, insertIndex) + newPageJSON + treeJSON.slice(insertIndex);
-            await redis.set(queueUrl + '-tree', treeJSON);
-
-
-            // TODO: if url is in urlList don't send new links (messages)
-            // let allUrls = await redis.get(queueUrl + '-urlList');
-            // if (allUrls.includes(url)) continue;
-
-            // TODO: add url to urlList
-            // await redis.set(queueUrl + '-urlList', [...allUrls, url]);
-
-            let didReachMaxPages = false;
-            for (let i = 0; i < page.links.length; i++) {
-                let link = page.links[i];
-
-                // TODO: if pages counter plus link index is equal to max pages break
-                // if (pageCounter + linkIndex + 1 >= =maxPages) {
-                //     await redis.set(crawlingDone + queueUrl, true));
-                //     didReachMaxPages = true;
-                //     break;
-                // }
-
-
-                // TODO: send new message with the link and level
-                // await sendMessageToQueue(queueUrl, link, url, currentLevel + 1);
-            }
-            // if (didReachMaxPages) break;
-        }
-
-        // TODO: delete messages in queue
-        //await deleteMessagesFromQueue(queueUrl, messages);
-
-        crawl();
-    } catch (err) {
-        console.log(err);
-        throw new Error(err.message);
-    }
-}
+module.exports = crawl;

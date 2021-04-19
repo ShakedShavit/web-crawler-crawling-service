@@ -1,5 +1,4 @@
 const AWS = require('aws-sdk');
-const getAllLinksInPage = require('./cheerio');
 
 const sqs = new AWS.SQS({
     apiVersion: '2012-11-05',
@@ -71,101 +70,8 @@ const deleteMessagesFromQueue = async (QueueUrl, messages) => {
     }
 }
 
-const deleteQueue = async (QueueUrl) => {
-    try {
-        await sqs.deleteQueue({ QueueUrl }).promise();
-        console.log('deleted');
-    } catch (err) {
-        throw new Error(err.message);
-    }
-}
-
-
-let receiveMessagesProcessResolved = { isTrue: true }; //Has to be object (instead of simple bool value)
-let messagesCounter;
-let urlArr = [];
-
-const handleMessagesFromQueue = async (queueUrl, maxDepth, maxPages, clearSearchInterval) => {
-    receiveMessagesProcessResolved.isTrue = false;
-    try {
-        const messages = await pollMessagesFromQueue(queueUrl);
-
-        // Is search complete
-        if (messages.length === 0) {
-            await clearSearchInterval();
-            console.log('Search Complete');
-            return;
-        }
-
-        console.log('new poll batch');
-
-        for (let message of messages) {
-            if (receiveMessagesProcessResolved.isTrue) break; // Queue deleted before processing finished
-
-            console.log();
-            console.log('message');
-
-            let currentMessageLevel = parseInt(message.MessageAttributes.level.StringValue);
-            if (currentMessageLevel >= maxDepth) {
-                console.log('Reached max depth');
-                break;
-            }
-            if (messagesCounter >= maxPages) {
-                console.log('Reached max pages');
-                break;
-            }
-
-            if (urlArr.includes(message.Body)) break;
-            urlArr.push(message.Body);
-
-            let shouldSaveSiteOnRedis = false;
-
-            let links = await getSiteLinksFromRedis(message.Body); //
-            if (links == undefined || links.length === 0) {
-                shouldSaveSiteOnRedis = true;
-                links = await getAllLinksInPage(message.Body);
-            }
-
-            for (let link of links) {
-                if (receiveMessagesProcessResolved.isTrue) {
-                    shouldSaveSiteOnRedis = false;
-                    break; // Queue deleted before processing finished
-                }
-                
-                await sendMessageToQueue(queueUrl, link, currentMessageLevel + 1);
-                
-                new Site(link, currentMessageLevel + 1, message.Body);
-
-                messagesCounter++;
-
-                if (messagesCounter >= maxPages) {
-                    shouldSaveSiteOnRedis = false;
-                    break;
-                }
-            }
-
-            if (shouldSaveSiteOnRedis) {
-                await setNewSiteInRedis(message.Body, links); //
-            }
-        }
-
-        if (receiveMessagesProcessResolved.isTrue) return; // Queue deleted before processing finished
-        
-        await deleteMessagesFromQueue(queueUrl, messages);
-
-        receiveMessagesProcessResolved.isTrue = true;
-
-        return false;
-    } catch (err) {
-        console.log(err);
-        receiveMessagesProcessResolved.isTrue = true;
-    }
-}
-
 module.exports = {
-    sqs,
     sendMessageToQueue,
-    deleteQueue,
-    handleMessagesFromQueue,
-    receiveMessagesProcessResolved
+    pollMessagesFromQueue,
+    deleteMessagesFromQueue
 };

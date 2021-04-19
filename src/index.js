@@ -1,19 +1,48 @@
 const express = require('express');
 const cors = require('cors');
+const { getLastElOfListAndPushItToDestListInRedis } = require('./utils/redis');
+const crawl = require('./utils/crawler');
 
 const port = process.env.PORT || 5001;
-
-// try {
-//     setStrWithExInRedis('aa', '3').then((res) => {
-//         console.log(res);
-//     });
-// } catch (err) {
-//     console.log(err.message);
-// }
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const getQueueUrlFromRedis = (queueUrlListKey) => {
+    return new Promise((resolve, reject) => {
+        getLastElOfListAndPushItToDestListInRedis(queueUrlListKey)
+        .then((res) => {
+            if (!res) reject(res);
+            resolve(res);
+        })
+        .catch((err) => {
+            reject(err);
+        });
+    });
+}
+
+let queueListKey = 'queueUrlList';
+
+startCrawlingProcess = () => {
+    getQueueUrlFromRedis(queueListKey)
+    .then((queueUrl) => {
+        crawl(queueUrl).then(() => {
+            startCrawlingProcess();
+        }).catch((err) => {
+            startCrawlingProcess();
+        }); // if fails or success restart
+    })
+    .catch((err) => {
+        console.log(err, '28');
+        // If it fails or the list is empty, wait and retry
+        setTimeout(() => {
+            startCrawlingProcess();
+        }, 1500);
+    });
+}
+
+startCrawlingProcess();
 
 // app.post('start-scraping', (req, res) => {
 //     try {
@@ -49,3 +78,5 @@ app.use(express.json());
 app.listen(port, () => {
     console.log(`Server connected to port: ${port}`);
 });
+
+module.exports = startCrawlingProcess;

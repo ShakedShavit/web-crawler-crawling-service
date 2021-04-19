@@ -17,6 +17,7 @@ const getHashValuesFromRedis = async (hashKey, fieldsArr) => {
 const getHashValFromRedis = async (hashKey, field) => {
     try {
         const value = await redisClient.hgetAsync(hashKey, field);
+        if (value == null) throw new Error('value is null or undefined');
         console.log(value, '20');
         return value;
     } catch (err) {
@@ -25,8 +26,21 @@ const getHashValFromRedis = async (hashKey, field) => {
     }
 }
 
+const doesKeyExistInRedis = async (key) => {
+    try {
+        const doesKeyExist = await redisClient.existsAsync(key);
+        return doesKeyExist;
+    } catch (err) {
+        throw new Error(err.message);
+    }
+}
+
 const incHashIntValInRedis = async (hashKey, field, factor = 1) => {
     try {
+        const doesKeyExist = await doesKeyExistInRedis(hashKey);
+        // Return 0 or 1 (!0 equals True, !1 equals False)
+        if (!doesKeyExist) throw new Error('key does not exist in redis');
+
         if (typeof factor !== 'number') {
             let prevFactor = factor;
             factor = parseInt(factor);
@@ -44,6 +58,9 @@ const incHashIntValInRedis = async (hashKey, field, factor = 1) => {
 
 const setHashStrValInRedis = async (hashKey, field, value) => {
     try {
+        const doesKeyExist = await doesKeyExistInRedis(hashKey);
+        if (!doesKeyExist) throw new Error('key does not exist in redis');
+
         if (typeof value !== 'string') throw new Error(`value's type must be string. value (${value}) input is of type ${typeof value}`);
 
         await redisClient.hsetAsync(hashKey, field, value);
@@ -79,11 +96,25 @@ const setStrWithExInRedis = async (key, value, exSec = 300) => {
     }
 }
 
+// Pops (and returns) last el of list and pushes it in another list (both lists could be the same list)
+const getLastElOfListAndPushItToDestListInRedis = async (sourceKey, destKey = sourceKey) => {
+    try {
+        const lastEl = await redisClient.rpoplpushAsync(sourceKey, destKey);
+        if (lastEl == null) throw new Error('source list does not exist or is empty');
+        return lastEl;
+    } catch (err) {
+        console.log(err.message);
+        throw new Error(err.message);
+    }
+}
+
 module.exports = {
+    doesKeyExistInRedis,
     getHashValuesFromRedis,
     getHashValFromRedis,
     incHashIntValInRedis,
     setHashStrValInRedis,
     getStrValFromRedis,
-    setStrWithExInRedis
+    setStrWithExInRedis,
+    getLastElOfListAndPushItToDestListInRedis
 }
