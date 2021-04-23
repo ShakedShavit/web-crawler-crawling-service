@@ -22,7 +22,7 @@ const getQueueUrlFromRedis = (queueUrlListKey) => {
     });
 }
 
-let queueListKey = 'queueUrlList';
+const queueListKey = 'queue-url-list';
 
 startCrawlingProcess = () => {
     getQueueUrlFromRedis(queueListKey)

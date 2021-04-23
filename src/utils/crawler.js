@@ -15,7 +15,7 @@ const {
 } = require('./sqs');
 
 //  data about particular search, shared by all workers through redis
-// queueUrl-worker: {                       
+//  queue-workers:<queueUrl>: {                       
 //      workersCounter: number              
 //      num of workers currently working on it (when worker starts crawling this url increment this). defaults to 0
 
@@ -26,12 +26,12 @@ const {
 //      the current search level (only when all the workers surpass this the workers can continue). defaults to 0
 
 //      pageCounter: number
-//      the current search page (for the maxLevel)
+//      the current search page (for the maxDepth)
 
 //      maxPages: number
 //      max search pages, is set in the REST API
 
-//      maxLevel: number
+//      maxDepth: number
 //      max search levels, is set in the REST API
 
 //      workersReachedNextLevelCounter: number
@@ -56,13 +56,16 @@ const waitForWorkersToReachNextLevel = async (hashKey, workerCountersFieldsArr, 
 
 // TODO: when starting the crawl process set the initial values in redis (pageCounter ...), nope, do tht in the main API instead
 
-// TODO: if maxPages or maxLevel are not specified
+// TODO: if maxPages or maxDepth are not specified
 
 // TODO: delete queue hash when deleting queue - IN MAIN API NOT HERE!!!!
 
-const insertPageToTree = async (treeJSON, newPageJSON, parentUrl) => {
+// Add new page obj directly to JSON formatted tree (without parsing it)
+const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
+    let newPageJSON = JSON.stringify(newPageObj);
     let searchString = `${parentUrl}","children":[`;
     let insertIndex = treeJSON.indexOf(searchString) + searchString.length;
+    if (insertIndex === -1) return newPageJSON; // If the tree is empty (first page insertion)
     if (treeJSON[insertIndex] === '{') newPageJSON += ',';
     return treeJSON.slice(0, insertIndex) + newPageJSON + treeJSON.slice(insertIndex);
 }
@@ -91,15 +94,15 @@ const processMessage = async (message, queueUrl) => {
              page = JSON.parse(page);
         }
 
-        //#region Update tree in redis
+        //#region Update tree in Redis
         const treeJSON = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[7]);
-        const newPageJSON = JSON.stringify({
+        const newPageObj = {
             title: page.title,
             level: messageLevel,
-            messageUrl,
+            url: messageUrl,
             children: []
-        });
-        await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[7], insertPageToTree(treeJSON, newPageJSON, parentUrl));
+        };
+        await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[7], getUpdatedJsonTree(treeJSON, newPageObj, parentUrl));
         //#endregion
 
         // If messageUrl has already been processed for this queue than move to next message
@@ -125,15 +128,15 @@ const processMessage = async (message, queueUrl) => {
 
 
 const crawl = async (queueUrl) => {
-    const queueRedisHashKey = `${queueUrl}-workers`;
-    const allQueueHashFields = ['workersCounter', 'isCrawlingDone', 'currentLevel', 'pageCounter', 'maxPages', 'maxLevel', 'workersReachedNextLevelCounter', 'tree'];
+    const queueRedisHashKey = `queue-workers:${queueUrl}`;
+    const allQueueHashFields = ['workersCounter', 'isCrawlingDone', 'currentLevel', 'pageCounter', 'maxPages', 'maxDepth', 'workersReachedNextLevelCounter', 'tree'];
 
     try {
         let doesQueueHashExist = await doesKeyExistInRedis(queueRedisHashKey);
-        if (!doesQueueHashExist) throw new Error(`${queueUrl}-workers does not exist in redis`);
+        if (!doesQueueHashExist) throw new Error(`queue-workers:${queueUrl} does not exist in redis`);
 
-        const [currentLevel, maxPages, maxLevel] = await getHashValuesFromRedis(queueRedisHashKey, [allQueueHashFields[2], allQueueHashFields[4], allQueueHashFields[5]]);
-        if (currentLevel == null) throw new Error('current level in queueUrl-workers hash is null');
+        const [currentLevel, maxPages, maxDepth] = await getHashValuesFromRedis(queueRedisHashKey, [allQueueHashFields[2], allQueueHashFields[4], allQueueHashFields[5]]);
+        if (currentLevel == null) throw new Error(`current level in queue-workers:${queueUrl} hash is null`);
 
         const crawlRecursive = async () => {
             // If other crawlers finished the scraping
@@ -152,7 +155,7 @@ const crawl = async (queueUrl) => {
             }
     
             for (let message of messages) {
-                let hasCrawlReachedLimit = await processMessage(message, queueUrl, currentLevel, maxPages, maxLevel);
+                let hasCrawlReachedLimit = await processMessage(message, queueUrl, currentLevel, maxPages, maxDepth);
                 if (hasCrawlReachedLimit) {
                     await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[1], 'true');
                     // TODO: restart interval to find new queue
