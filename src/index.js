@@ -28,8 +28,13 @@ startCrawlingProcess = () => {
     getQueueUrlFromRedis(queueListKey)
     .then((queueUrl) => {
         crawl(queueUrl).then(() => {
+            console.log("🚀 ~ file: index.js ~ line 31 ~ crawl ~ queueUrl", queueUrl)
             startCrawlingProcess();
         }).catch((err) => {
+            console.log();
+            console.log("Crawling session over, researching");
+            console.log();
+            console.log();
             startCrawlingProcess();
         }); // if fails or success restart
     })
@@ -78,5 +83,3 @@ startCrawlingProcess();
 app.listen(port, () => {
     console.log(`Server connected to port: ${port}`);
 });
-
-module.exports = startCrawlingProcess;

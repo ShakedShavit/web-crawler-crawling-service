@@ -6,7 +6,7 @@ const redisClient = require('../db/redis');
 const getHashValuesFromRedis = async (hashKey, fieldsArr) => {
     try {
         const values = await redisClient.hmgetAsync(hashKey, ...fieldsArr);
-        console.log(values, '9');
+        console.log(...fieldsArr, " " , values, '9');
         return values;
     } catch (err) {
         console.log(err.message, '12');
@@ -17,8 +17,8 @@ const getHashValuesFromRedis = async (hashKey, fieldsArr) => {
 const getHashValFromRedis = async (hashKey, field) => {
     try {
         const value = await redisClient.hgetAsync(hashKey, field);
-        if (value == null) throw new Error('value is null or undefined');
-        console.log(value, '20');
+        // if (value == null) throw new Error('value is null or undefined');
+        console.log('get', field, value, '20');
         return value;
     } catch (err) {
         console.log(err.message, '23');
@@ -48,7 +48,7 @@ const incHashIntValInRedis = async (hashKey, field, factor = 1) => {
         }
 
         const value = await redisClient.hincrbyAsync(hashKey, field, factor);
-        console.log(value, '35');
+        console.log('value:', value, 'factor:', factor, field);
         return value;
     } catch (err) {
         console.log(err.message, '37');
@@ -64,7 +64,7 @@ const setHashStrValInRedis = async (hashKey, field, value) => {
         if (typeof value !== 'string') throw new Error(`value's type must be string. value (${value}) input is of type ${typeof value}`);
 
         await redisClient.hsetAsync(hashKey, field, value);
-        console.log(value, '47');
+        console.log('set', field, value, '67');
         return value;
     } catch (err) {
         console.log(err.message, '50');
@@ -77,7 +77,7 @@ const setHashStrValInRedis = async (hashKey, field, value) => {
 const getStrValFromRedis = async (key) => {
     try {
         const value = await redisClient.getAsync(key);
-        console.log(value, '60');
+        console.log('get', key, value, '60');
         return value;
     } catch (err) {
         console.log(err.message, '62');

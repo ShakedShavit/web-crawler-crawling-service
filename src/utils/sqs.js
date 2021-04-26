@@ -20,7 +20,7 @@ const sendMessageToQueue = async (QueueUrl, url, level, parentUrl) => {
                 }
             },
             MessageBody: url,
-            // MessageDeduplicationId: `${url}`,  // Required for FIFO queues
+            MessageDeduplicationId: `${url},${level}`,  // Required for FIFO queues
             MessageGroupId: `${level}`  // Required for FIFO queues
         }).promise();
 
@@ -39,9 +39,9 @@ const pollMessagesFromQueue = async (QueueUrl) => {
             MessageAttributeNames: [
                 "All"
             ],
-            // AttributeNames: [
-            //     "All"
-            // ],
+            AttributeNames: [
+                "MessageGroupId"
+            ],
             VisibilityTimeout: 30,
             WaitTimeSeconds: 10
         }).promise();
