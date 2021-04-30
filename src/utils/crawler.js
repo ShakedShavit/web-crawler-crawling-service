@@ -172,16 +172,12 @@ const crawl = async (queueUrl) => {
         const crawlRecursive = async () => {
             // If other crawlers finished the scraping
             let isCrawlingDone = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[1]);
-            if (isCrawlingDone === 'true') {
-                // TODO: restart interval to find new queue
-                return; // Exit condition
-            }
+            if (isCrawlingDone === 'true') return; // Exit condition
     
             const messages = await pollMessagesFromQueue(queueUrl);
 
             if (messages.length === 0) {
                 await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[1], 'true');
-                // TODO: restart interval to find new queue
                 return; // Exit condition
             }
     
@@ -197,14 +193,13 @@ const crawl = async (queueUrl) => {
         await crawlRecursive();
     } catch (err) {
         console.log(err, '174');
-
         try {
             await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[0], -1);
-            // TODO restart interval to find new queue
         } catch (error) {
             console.log(error);
             throw new Error({ err, error });
         }
+        // Would cause re-crawling with new queue
         throw new Error(err);
     }
 }
