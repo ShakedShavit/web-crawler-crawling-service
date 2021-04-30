@@ -41,27 +41,33 @@ const getPageInfo = require('./cheerio');
 //      the entire tree of the queueUrl is saved (in the form of JSON)
 //}
 
-
-const waitForWorkersToReachNextLevel = async (hashKey, workerCountersFieldsArr, currentLevelField, workersReachedNextLevelCounterField) => {
-    let [workersCounter, workersReachedNextLevelCounter] = await getHashValuesFromRedis(hashKey, workerCountersFieldsArr);
-    workersCounter = parseInt(workersCounter);
-    workersReachedNextLevelCounter = parseInt(workersReachedNextLevelCounter);
-    if (workersReachedNextLevelCounter !== workersCounter) {
-        await setTimeout(() => {}, 1000);
-        await waitForWorkersToReachNextLevel(hashKey, workerCountersFieldsArr, currentLevelField, workersReachedNextLevelCounterField);
+const getWrkCounterAndWrkReachedNextLvl = async (hashKey, workerCountersFieldsArr) => {
+    try {
+        let [workersCounter, workersReachedNextLevelCounter] = await getHashValuesFromRedis(hashKey, workerCountersFieldsArr);
+        return {workersCounter: parseInt(workersCounter), workersReachedNextLevelCounter: parseInt(workersReachedNextLevelCounter)};
+    } catch (err) {
+        throw new Error("couldn't fetch workersCounter and/or workersReachedNextLevelCounter from redis");
     }
-    await incHashIntValInRedis(hashKey, workersReachedNextLevelCounterField, -1);
+}
+
+const waitForWorkersToReachNextLevel = async (hashKey, workerCountersFieldsArr, workersReachedNextLevelCounterField) => {
+    try {
+        let workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
+        while (workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
+        }
+    
+        await incHashIntValInRedis(hashKey, workersReachedNextLevelCounterField, -1);
+    } catch(err) {
+        throw new Error(err.message);
+    }
 }
 
 // Add new page obj directly to JSON formatted tree (without parsing it)
-const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
+const getUpdatedJsonTree = (treeJSON, newPageObj) => {
     let newPageJSON = JSON.stringify(newPageObj);
-    console.log(treeJSON, '57');
-    console.log();
-    console.log(newPageJSON, '58');
-    console.log();
-    console.log(parentUrl, '62');
-    let searchString = `${parentUrl}","children":[`;
+    let searchString = `${newPageObj.parentUrl}","children":[`;
     let insertIndex = treeJSON.indexOf(searchString);
     if (insertIndex === -1) return newPageJSON; // If the tree is empty (first page insertion)
     insertIndex += searchString.length;
@@ -82,7 +88,7 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
             console.log('\n reached next level \n');
             await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6]);
             // Recursive func that stops when all other workers get to the next level
-            await waitForWorkersToReachNextLevel(queueRedisHashKey, [allQueueHashFields[0], allQueueHashFields[6]], allQueueHashFields[2], allQueueHashFields[6]);
+            await waitForWorkersToReachNextLevel(queueRedisHashKey, [allQueueHashFields[0], allQueueHashFields[6]], allQueueHashFields[6]);
 
             // If no other worker has changes the current level in hash yet, than increment it (make it equal to message level)
             let newCurrentLevel = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[2]);
@@ -98,31 +104,36 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
         } else {
              page = JSON.parse(page);
         }
+        const links = page.links;
 
         //#region Update tree in Redis
         const treeJSON = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[7]);
         const newPageObj = {
             title: page.title,
+            parentUrl,
             level: messageLevel,
             url: messageUrl,
             children: []
         };
-        await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[7], getUpdatedJsonTree(treeJSON, newPageObj, parentUrl));
+        await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[7], getUpdatedJsonTree(treeJSON, newPageObj));
         //#endregion
 
         // If messageUrl has already been processed for this queue than move to next message
-        if (treeJSON.includes(messageUrl) || !page.links) return false;
+        if (treeJSON.includes(`"url":"${messageUrl}"`) || !links) return false;
+
+        const linksLevel = messageLevel + 1;
 
         // If messageLevel = maxLevel than don't send new messages
-        if (!!maxDepth && messageLevel + 1 >= maxDepth) {
+        if (!!maxDepth && linksLevel >= maxDepth) {
             console.log('maxDepth:', maxDepth, 'messageLevel:', messageLevel, '128');
             return false;
         }
 
+        let sendMsgErrCounter = 0;
         let pageCounter;
-        const linksLength = page.links.length;
+        const linksLength = links.length;
         for (let i = 0; i < linksLength; i++) {
-            let link = page.links[i];
+            let link = links[i];
 
             // If crawl limits have been reached
             if (!!maxPages) {
@@ -135,7 +146,15 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
                 }
             }
 
-            await sendMessageToQueue(queueUrl, link, messageLevel + 1, messageUrl);
+            // If a page with the same signature (url, level and parent url) has already been added to the tree, than don't send new link message and don't increment page counter (since that message wasn't sent)
+            if (treeJSON.includes(`${parentUrl}","level":${linksLevel},"url":"${link}"`) ||
+                (i !== 0 && links.slice(0, i).includes(link))) continue;
+            try {
+                await sendMessageToQueue(queueUrl, link, linksLevel, messageUrl);
+            } catch (err) {
+                if (++sendMsgErrCounter > 2 && linksLength > 2) throw new Error(err);
+                continue;
+            }
             // Update page counter
             if (!!maxPages) await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[3]);
         }
@@ -169,16 +188,24 @@ const crawl = async (queueUrl) => {
 
         await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[0]);
 
-        const crawlRecursive = async () => {
+        let isCrawlingDone = 'false'
+        do {
             // If other crawlers finished the scraping
-            let isCrawlingDone = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[1]);
-            if (isCrawlingDone === 'true') return; // Exit condition
+            isCrawlingDone = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[1]);
+            if (isCrawlingDone === 'true') break; // Exit condition
     
             const messages = await pollMessagesFromQueue(queueUrl);
 
             if (messages.length === 0) {
+                // Might be that all the messages were polled (by other crawlers) but not processed yet (because they reached next level and are waiting for this one to update), if so, than increment the counter and re-try
+                let workersMap = await getWrkCounterAndWrkReachedNextLvl(queueRedisHashKey, [allQueueHashFields[0], allQueueHashFields[6]]);
+                if (workersMap.workersCounter !== 1 && workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
+                    await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6]);
+                    continue;
+                }
+                
                 await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[1], 'true');
-                return; // Exit condition
+                break; // Exit condition
             }
     
             for (let message of messages) {
@@ -186,11 +213,9 @@ const crawl = async (queueUrl) => {
             }
     
             await deleteMessagesFromQueue(queueUrl, messages);
+        } while (isCrawlingDone === 'false'); // while(true) will accomplish the same here
 
-            await crawlRecursive();
-        }
-
-        await crawlRecursive();
+        await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[0], -1);
     } catch (err) {
         console.log(err, '174');
         try {

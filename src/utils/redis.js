@@ -103,7 +103,7 @@ const getLastElOfListAndPushItToDestListInRedis = async (sourceKey, destKey = so
         if (lastEl == null) throw new Error('source list does not exist or is empty');
         return lastEl;
     } catch (err) {
-        console.log(err.message);
+        console.log(err.message, '106');
         throw new Error(err.message);
     }
 }

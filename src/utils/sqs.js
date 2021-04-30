@@ -6,6 +6,25 @@ const sqs = new AWS.SQS({
 });
 
 const sendMessageToQueue = async (QueueUrl, url, level, parentUrl) => {
+    let MessageDeduplicationId = url;
+    const urlLen = url.length;
+    // const parentUrlLen = parentUrl.length;
+
+    const msgDuplicationIdAddition = `,${level}`;
+    const maxMsgIdLen = 128 - msgDuplicationIdAddition.length;
+
+    if (urlLen > maxMsgIdLen) MessageDeduplicationId = url.slice(urlLen - maxMsgIdLen);
+    MessageDeduplicationId += msgDuplicationIdAddition;
+
+    // const msgDuplicationIdLen =  + parentUrlLen;
+
+    // if (msgDuplicationIdLen <= maxMsgIdLen) MessageDeduplicationId = url + parentUrl + msgDuplicationIdAddition;
+    // else {
+    //     let extraLength = msgDuplicationIdLen - maxMsgIdLen;
+    //     MessageDeduplicationId = url.slice((extraLength + extraLength % 2) / 2) + parentUrl.slice((extraLength - extraLength % 2) / 2) + msgDuplicationIdAddition;
+    //     if (MessageDeduplicationId.length > 128) MessageDeduplicationId = MessageDeduplicationId.slice(MessageDeduplicationId.length - 128);
+    // }
+
     try {
         const { MessageId } = await sqs.sendMessage({
             QueueUrl,
@@ -20,7 +39,7 @@ const sendMessageToQueue = async (QueueUrl, url, level, parentUrl) => {
                 }
             },
             MessageBody: url,
-            MessageDeduplicationId: `${url},${level}`,  // Required for FIFO queues
+            MessageDeduplicationId,  // Required for FIFO queues
             MessageGroupId: `${level}`  // Required for FIFO queues
         }).promise();
 

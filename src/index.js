@@ -22,29 +22,28 @@ const getQueueUrlFromRedis = (queueUrlListKey) => {
     });
 }
 
-const queueListKey = 'queue-url-list';
+const startCrawlingProcess = async () => {
+    const queueListKey = 'queue-url-list';
 
-startCrawlingProcess = () => {
-    getQueueUrlFromRedis(queueListKey)
-    .then((queueUrl) => {
-        crawl(queueUrl).then(() => {
-            console.log("🚀 ~ file: index.js ~ line 31 ~ crawl ~ queueUrl", queueUrl)
-            startCrawlingProcess();
-        }).catch((err) => {
-            console.log();
-            console.log("Crawling session over, researching");
-            console.log();
-            console.log();
-            startCrawlingProcess();
-        }); // if fails or success restart
-    })
-    .catch((err) => {
-        console.log(err, '28');
-        // If it fails or the list is empty, wait and retry
-        setTimeout(() => {
-            startCrawlingProcess();
-        }, 1500);
-    });
+    while (true) {
+        let queueUrl;
+        try {
+            queueUrl = await getQueueUrlFromRedis(queueListKey);
+        } catch (err) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            continue;
+        }
+
+        try {
+            console.time(queueUrl);
+            await crawl(queueUrl);
+            console.timeEnd(queueUrl);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+        } catch (err) {
+            console.log(err.message, err, '64');
+            continue;
+        }
+    }
 }
 
 startCrawlingProcess();
