@@ -18,7 +18,7 @@ const getHashValFromRedis = async (hashKey, field) => {
     try {
         const value = await redisClient.hgetAsync(hashKey, field);
         // if (value == null) throw new Error('value is null or undefined');
-        console.log('get', field, value, '20');
+        if (field !== 'tree') console.log('get', field, value, '20');
         return value;
     } catch (err) {
         console.log(err.message, '23');
@@ -64,7 +64,7 @@ const setHashStrValInRedis = async (hashKey, field, value) => {
         if (typeof value !== 'string') throw new Error(`value's type must be string. value (${value}) input is of type ${typeof value}`);
 
         await redisClient.hsetAsync(hashKey, field, value);
-        console.log('set', field, value, '67');
+        if (field !== 'tree') console.log('set', field, value, '67');
         return value;
     } catch (err) {
         console.log(err.message, '50');
@@ -77,7 +77,7 @@ const setHashStrValInRedis = async (hashKey, field, value) => {
 const getStrValFromRedis = async (key) => {
     try {
         const value = await redisClient.getAsync(key);
-        console.log('get', key, value, '60');
+        if (key.slice(0, 4) !== 'http') console.log('get', key, value, '60');
         return value;
     } catch (err) {
         console.log(err.message, '62');

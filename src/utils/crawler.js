@@ -54,10 +54,10 @@ const waitForWorkersToReachNextLevel = async (hashKey, workerCountersFieldsArr, 
     try {
         let workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
         while (workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
+            await new Promise(resolve => setTimeout(resolve, 500));
             workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
         }
-    
+        if (workersMap.workersCounter > 1) await new Promise(resolve => setTimeout(resolve, 1000)); // Gives a chance to the rest of the workers to notice the change
         await incHashIntValInRedis(hashKey, workersReachedNextLevelCounterField, -1);
     } catch(err) {
         throw new Error(err.message);
@@ -87,12 +87,11 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
         if (messageLevel > currentLevel) {
             console.log('\n reached next level \n');
             await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6]);
-            // Recursive func that stops when all other workers get to the next level
             await waitForWorkersToReachNextLevel(queueRedisHashKey, [allQueueHashFields[0], allQueueHashFields[6]], allQueueHashFields[6]);
 
             // If no other worker has changes the current level in hash yet, than increment it (make it equal to message level)
             let newCurrentLevel = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[2]);
-            if (parseInt(newCurrentLevel) !== messageLevel) await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[2], messageLevel.toString());
+            if (parseInt(newCurrentLevel) !== messageLevel) await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[2], `${messageLevel}`);
             console.log('newCurrentLevel: ', newCurrentLevel, " is changing it:", parseInt(newCurrentLevel) !== messageLevel);
         }
 
@@ -150,7 +149,7 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
             if (treeJSON.includes(`${parentUrl}","level":${linksLevel},"url":"${link}"`) ||
                 (i !== 0 && links.slice(0, i).includes(link))) continue;
             try {
-                await sendMessageToQueue(queueUrl, link, linksLevel, messageUrl);
+                await sendMessageToQueue(queueUrl, link, linksLevel, messageUrl, pageCounter);
             } catch (err) {
                 if (++sendMsgErrCounter > 2 && linksLength > 2) throw new Error(err);
                 continue;
@@ -188,25 +187,33 @@ const crawl = async (queueUrl) => {
 
         await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[0]);
 
-        let isCrawlingDone = 'false'
+        let wasQueueEmptyPrevPoll = false;
+        let isCrawlingDone = 'false';
         do {
             // If other crawlers finished the scraping
             isCrawlingDone = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[1]);
             if (isCrawlingDone === 'true') break; // Exit condition
     
+let date = new Date();
+console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
+
             const messages = await pollMessagesFromQueue(queueUrl);
 
             if (messages.length === 0) {
                 // Might be that all the messages were polled (by other crawlers) but not processed yet (because they reached next level and are waiting for this one to update), if so, than increment the counter and re-try
                 let workersMap = await getWrkCounterAndWrkReachedNextLvl(queueRedisHashKey, [allQueueHashFields[0], allQueueHashFields[6]]);
-                if (workersMap.workersCounter !== 1 && workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
+                if (!wasQueueEmptyPrevPoll && workersMap.workersCounter !== 1 && workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
                     await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6]);
+                    wasQueueEmptyPrevPoll = true;
                     continue;
-                }
+                } else if (wasQueueEmptyPrevPoll && workersMap.workersCounter !== 1 && workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) continue;
                 
                 await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[1], 'true');
                 break; // Exit condition
             }
+
+            if (wasQueueEmptyPrevPoll) await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6], -1);
+            wasQueueEmptyPrevPoll = false;
     
             for (let message of messages) {
                 await processMessage(message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth);
