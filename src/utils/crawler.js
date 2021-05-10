@@ -77,13 +77,14 @@ const getUpdatedJsonTree = (treeJSON, newPageObj) => {
 
 const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth) => {
     try {
-        const messageLevel = parseInt(message.Attributes.MessageGroupId);
+        const messageLevel = parseInt(message.MessageAttributes.level.StringValue);
         const messageUrl = message.Body;
         const parentUrl = message.MessageAttributes.parentUrl.StringValue;
 
         // If reached next level, stop to check if all other workers have reached it as well
         let currentLevel = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[2]);
         currentLevel = parseInt(currentLevel);
+        if (messageLevel < currentLevel) console.log("\n\n\n\n\n\n\n\n***********\n\n\n\n\n\n\n\n");
         if (messageLevel > currentLevel) {
             console.log('\n reached next level \n');
             await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6]);
@@ -107,18 +108,21 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
 
         //#region Update tree in Redis
         const treeJSON = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[7]);
+        let isUrlIncludedInTree = treeJSON.includes(`"url":"${messageUrl}"`);
+
         const newPageObj = {
             title: page.title,
             parentUrl,
             level: messageLevel,
-            url: messageUrl,
-            children: []
+            url: messageUrl
         };
+        if (!isUrlIncludedInTree) newPageObj.children = [];
+
         await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[7], getUpdatedJsonTree(treeJSON, newPageObj));
         //#endregion
 
         // If messageUrl has already been processed for this queue than move to next message
-        if (treeJSON.includes(`"url":"${messageUrl}"`) || !links) return false;
+        if (isUrlIncludedInTree || !links) return false;
 
         const linksLevel = messageLevel + 1;
 
@@ -146,8 +150,9 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
             }
 
             // If a page with the same signature (url, level and parent url) has already been added to the tree, than don't send new link message and don't increment page counter (since that message wasn't sent)
-            if (treeJSON.includes(`${parentUrl}","level":${linksLevel},"url":"${link}"`) ||
-                (i !== 0 && links.slice(0, i).includes(link))) continue;
+            // if (treeJSON.includes(`${parentUrl}","level":${linksLevel},"url":"${link}"`) ||
+            //     (i !== 0 && links.slice(0, i).includes(link))) continue;
+            if (i !== 0 && links.slice(0, i).includes(link)) continue;
             try {
                 await sendMessageToQueue(queueUrl, link, linksLevel, messageUrl, pageCounter);
             } catch (err) {
@@ -159,7 +164,7 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
         }
     } catch (err) {
         console.log(err.message);
-        throw new Error(err.message);
+        return err.message;
     }
 }
 
@@ -198,6 +203,7 @@ let date = new Date();
 console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
 
             const messages = await pollMessagesFromQueue(queueUrl);
+            console.log(messages.length, 'number of messages polled');
 
             if (messages.length === 0) {
                 // Might be that all the messages were polled (by other crawlers) but not processed yet (because they reached next level and are waiting for this one to update), if so, than increment the counter and re-try
@@ -212,14 +218,17 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 break; // Exit condition
             }
 
-            if (wasQueueEmptyPrevPoll) await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6], -1);
-            wasQueueEmptyPrevPoll = false;
+            if (wasQueueEmptyPrevPoll) {
+                await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6], -1);
+                wasQueueEmptyPrevPoll = false;
+            }
     
             for (let message of messages) {
                 await processMessage(message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth);
             }
     
             await deleteMessagesFromQueue(queueUrl, messages);
+            console.log('messages deleted');
         } while (isCrawlingDone === 'false'); // while(true) will accomplish the same here
 
         await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[0], -1);
