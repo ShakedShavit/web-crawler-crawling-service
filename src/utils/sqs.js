@@ -5,7 +5,10 @@ const sqs = new AWS.SQS({
     region: process.env.AWS_REGION
 });
 
-const sendMessageToQueue = async (QueueUrl, url, level, parentUrl) => {
+const sendMessageToQueue = async (QueueUrl, url, level, parentUrl, pageCounter) => {
+    let MessageDeduplicationId = `${parentUrl},${url.slice(4)},${level},${pageCounter + 1}`;
+    let messageIdLen = MessageDeduplicationId.length;
+    if (messageIdLen > 128) MessageDeduplicationId = MessageDeduplicationId.slice(messageIdLen - 128);
     try {
         const { MessageId } = await sqs.sendMessage({
             QueueUrl,
@@ -20,6 +23,8 @@ const sendMessageToQueue = async (QueueUrl, url, level, parentUrl) => {
                 }
             },
             MessageBody: url,
+            MessageGroupId: '0', // Every message should have the same group ID
+            MessageDeduplicationId
         }).promise();
 
         return MessageId;
@@ -33,14 +38,14 @@ const pollMessagesFromQueue = async (QueueUrl) => {
     try {
         const { Messages } = await sqs.receiveMessage({
             QueueUrl,
-            MaxNumberOfMessages: 5,
+            MaxNumberOfMessages: 10,
             MessageAttributeNames: [
                 "All"
             ],
-            AttributeNames: [
-                "MessageGroupId"
-            ],
-            VisibilityTimeout: 1800,
+            // AttributeNames: [
+            //     "MessageGroupId"
+            // ],
+            VisibilityTimeout: 120,
             WaitTimeSeconds: 10
         }).promise();
 
