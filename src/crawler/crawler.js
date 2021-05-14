@@ -3,17 +3,21 @@ const {
     getHashValuesFromRedis,
     getHashValFromRedis,
     incHashIntValInRedis,
-    setHashStrValInRedis,
-    getStrValFromRedis,
-    setStrWithExInRedis
-} = require('./redis');
+    setHashStrValInRedis
+} = require('../utils/redis');
 const {
     sendMessageToQueue,
     pollMessagesFromQueue,
     deleteMessagesFromQueue,
     deleteMessagesBatchFromQueue
-} = require('./sqs');
-const getPageInfo = require('./cheerio');
+} = require('../utils/sqs');
+const {
+    getWrkCounterAndWrkReachedNextLvl,
+    waitForWorkersToReachNextLevel,
+    getHasReachedMaxLevel,
+    getHasReachedMaxPages,
+    getLinksAndAddPageToTree
+} = require('../crawler/utils');
 
 //  data about particular search, shared by all workers through redis
 //  queue-workers:<queueUrl>: {                       
@@ -42,86 +46,12 @@ const getPageInfo = require('./cheerio');
 //      the entire tree of the queueUrl is saved (in the form of JSON)
 //}
 
-const getWrkCounterAndWrkReachedNextLvl = async (hashKey, workerCountersFieldsArr) => {
-    try {
-        let [workersCounter, workersReachedNextLevelCounter] = await getHashValuesFromRedis(hashKey, workerCountersFieldsArr);
-        return {workersCounter: parseInt(workersCounter), workersReachedNextLevelCounter: parseInt(workersReachedNextLevelCounter)};
-    } catch (err) {
-        throw new Error("couldn't fetch workersCounter and/or workersReachedNextLevelCounter from redis");
-    }
-}
-
-const waitForWorkersToReachNextLevel = async (hashKey, workerCountersFieldsArr, workersReachedNextLevelCounterField) => {
-    try {
-        let workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
-        while (workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
-        }
-        if (workersMap.workersCounter > 1) await new Promise(resolve => setTimeout(resolve, 1000)); // Gives a chance to the rest of the workers to notice the change
-        await incHashIntValInRedis(hashKey, workersReachedNextLevelCounterField, -1);
-    } catch(err) {
-        throw new Error(err.message);
-    }
-}
-
-// Add new page obj directly to JSON formatted tree (without parsing it)
-const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
-    let newPageJSON = JSON.stringify(newPageObj);
-    let searchString = `${parentUrl}","children":[`;
-    let insertIndex = treeJSON.indexOf(searchString);
-    if (insertIndex === -1) return newPageJSON; // If the tree is empty (first page insertion)
-    insertIndex += searchString.length;
-    if (treeJSON[insertIndex] === '{') newPageJSON += ',';
-    return treeJSON.slice(0, insertIndex) + newPageJSON + treeJSON.slice(insertIndex);
-}
-
-const getLinksAndAddPageToTree = async (message, queueRedisHashKey, queueTreeField, isMsgLastLevel) => {
+const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth, hasReachedMaxLevel = false, hasReachedMaxPages = false) => {
     const messageUrl = message.url;
     const messageLevel = message.level;
-    const parentUrl = message.parentUrl;
     try {
-        // Get page from db, and if it doesn't exist than create it and save it on db
-        let page = await getStrValFromRedis(messageUrl);
-        if (!page) {
-             page = await getPageInfo(messageUrl, !isMsgLastLevel);
-             if (!isMsgLastLevel && !page.error) await setStrWithExInRedis(messageUrl, JSON.stringify(page));
-        } else page = JSON.parse(page);
-
-        const newPageObj = {
-            title: page.title,
-            level: messageLevel,
-            url: messageUrl
-        };
-        const treeJSON = await getHashValFromRedis(queueRedisHashKey, queueTreeField);
-
-        const isUrlInTree = treeJSON.includes(`,"url":"${messageUrl}"`)
-        if (!isUrlInTree && !isMsgLastLevel) newPageObj.children = page.error || [];
-
-        const updatedTree = getUpdatedJsonTree(treeJSON, newPageObj, parentUrl);
-        await setHashStrValInRedis(queueRedisHashKey, queueTreeField, updatedTree);
-
-        return isUrlInTree ? [] : page.links;
-    } catch (err) {
-        console.log(err);
-        return [];
-    }
-}
-
-const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth) => {
-    const messageUrl = message.url;
-    const messageLevel = message.level;
-
-    const isMsgLastLevel = !!maxDepth && messageLevel >= maxDepth - 1;
-    try {
-        const links = await getLinksAndAddPageToTree(message, queueRedisHashKey, allQueueHashFields[7], isMsgLastLevel);
-
-        const linksLength = links.length;
-        // If message level is equal to max level than don't send new messages
-        if (!links || linksLength === 0 || isMsgLastLevel) {
-            console.log('maxDepth:', maxDepth, 'messageLevel:', messageLevel, '128');
-            return;
-        }
+        const links = await getLinksAndAddPageToTree(message, queueRedisHashKey, allQueueHashFields, hasReachedMaxLevel || hasReachedMaxPages);
+        if (hasReachedMaxLevel) return { hasReachedMaxLevel, hasReachedMaxPages };
 
         // If reached next level, stop to check if all other workers have reached it as well
         let currentLevel = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[2]);
@@ -135,41 +65,39 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
             let newCurrentLevel = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[2]);
             if (parseInt(newCurrentLevel) !== messageLevel) await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[2], `${messageLevel}`);
             console.log('newCurrentLevel: ', newCurrentLevel, " is changing it:", parseInt(newCurrentLevel) !== messageLevel);
+            if (await getHasReachedMaxLevel(queueRedisHashKey, allQueueHashFields[2], maxDepth, newCurrentLevel)) return { hasReachedMaxLevel: true, hasReachedMaxPages };
         }
+
+        const linksLength = links.length;
+        // If message level is equal to max level than don't send new messages
+        if (!links || linksLength === 0  || hasReachedMaxPages) { hasReachedMaxLevel, hasReachedMaxPages };
         
         const linksLevel = messageLevel + 1;
 
-        let sendMsgErrCounter = 0;
+        let linkErrCounter = 0;
         let pageCounter;
         for (let i = 0; i < linksLength; i++) {
             let link = links[i];
             console.log(`\n\n${link}`);
-
             if ((i !== 0 && links.slice(0, i).includes(link))) continue;
-
-            // If crawl limits have been reached
-            if (!!maxPages) {
-                pageCounter = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[3]);
-                pageCounter = parseInt(pageCounter);
-
-                if (pageCounter >= maxPages) {
-                    console.log('pageCounter:', pageCounter, 'maxPages:', maxPages, '128');
-                    break; // Exit
-                }
-            }
-            
             try {
+                pageCounter = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[3]);
+                // If crawl limits have been reached
+                if (await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, pageCounter)) return { hasReachedMaxLevel, hasReachedMaxPages: true }; // Exit
+                
                 await sendMessageToQueue(queueUrl, link, linksLevel, messageUrl, pageCounter);
             } catch (err) {
-                if (++sendMsgErrCounter > 2 && linksLength > 2) throw new Error(err);
+                if (++linkErrCounter > 2 && linksLength > 2) throw new Error(err);
                 continue; // Do not increment page counter
             }
             // Update page counter
             if (!!maxPages) await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[3]);
         }
+
+        return { hasReachedMaxLevel, hasReachedMaxPages };
     } catch (err) {
         console.log(err.message);
-        return err.message;
+        return { hasReachedMaxLevel, hasReachedMaxPages, err: err.message };
     }
 }
 
@@ -199,6 +127,8 @@ const crawl = async (queueUrl) => {
 
         let wasQueueEmptyPrevPoll = false;
         let isCrawlingDone = 'false';
+        let hasReachedMaxLevel = false;
+        let hasReachedMaxPages = false;
         do {
             // If other crawlers finished the scraping
             isCrawlingDone = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[1]);
@@ -207,7 +137,10 @@ const crawl = async (queueUrl) => {
 let date = new Date();
 console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
 
-            const messages = await pollMessagesFromQueue(queueUrl);
+            hasReachedMaxLevel = hasReachedMaxLevel || await getHasReachedMaxLevel(queueRedisHashKey, allQueueHashFields[2], maxDepth, -1);
+            hasReachedMaxPages = hasReachedMaxPages || await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, -1);
+
+            const messages = await pollMessagesFromQueue(queueUrl, hasReachedMaxLevel || hasReachedMaxPages ? 10 : 3);
 
             if (messages.length === 0) {
                 // Could have simplify this section by using GetQueueAttributes (using sqs api),
@@ -222,7 +155,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 } else if (wasQueueEmptyPrevPoll && workersMap.workersCounter !== 1 && workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) continue;
                 
                 await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[1], 'true');
-                break; // Exit
+                break;
             }
 
             if (wasQueueEmptyPrevPoll) {
@@ -258,9 +191,11 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 console.log(e, '246');
                 await deleteMessagesFromQueue(queueUrl, messages);
             }
+            console.log('deleting messages', messages.length);
 
             for (let message of messagesInfoArr) {
-                await processMessage(message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth);
+                ({ hasReachedMaxLevel, hasReachedMaxPages } = await processMessage(message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth, hasReachedMaxLevel, hasReachedMaxPages));
+                console.log({ hasReachedMaxLevel, hasReachedMaxPages });
             }
         } while (isCrawlingDone === 'false'); // while(true) will accomplish the same here
 

@@ -13,7 +13,6 @@ const sendMessageToQueue = async (QueueUrl, url, level, parentUrl, pageCounter) 
     MessageDeduplicationId = MessageDeduplicationId.replace(/[^.,\/#!$%\^&\*;:{}=\-_`~()\w]/g, '')
     let messageIdLen = MessageDeduplicationId.length;
     if (messageIdLen > 128) MessageDeduplicationId = MessageDeduplicationId.slice(messageIdLen - 128);
-    console.log(MessageDeduplicationId);
     try {
         const { MessageId } = await sqs.sendMessage({
             QueueUrl,
@@ -39,11 +38,11 @@ const sendMessageToQueue = async (QueueUrl, url, level, parentUrl, pageCounter) 
     }
 }
 
-const pollMessagesFromQueue = async (QueueUrl) => {
+const pollMessagesFromQueue = async (QueueUrl, MaxNumberOfMessages = 10) => {
     try {
         const { Messages } = await sqs.receiveMessage({
             QueueUrl,
-            MaxNumberOfMessages: 10,
+            MaxNumberOfMessages,
             MessageAttributeNames: [
                 "All"
             ],

@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { getLastElOfListAndPushItToDestListInRedis } = require('./utils/redis');
-const crawl = require('./utils/crawler');
+const crawl = require('./crawler/crawler');
 
 const port = process.env.PORT || 5001;
 
