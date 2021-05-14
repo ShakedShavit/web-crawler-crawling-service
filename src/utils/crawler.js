@@ -10,7 +10,8 @@ const {
 const {
     sendMessageToQueue,
     pollMessagesFromQueue,
-    deleteMessagesFromQueue
+    deleteMessagesFromQueue,
+    deleteMessagesBatchFromQueue
 } = require('./sqs');
 const getPageInfo = require('./cheerio');
 
@@ -84,7 +85,7 @@ const getLinksAndAddPageToTree = async (message, queueRedisHashKey, queueTreeFie
         let page = await getStrValFromRedis(messageUrl);
         if (!page) {
              page = await getPageInfo(messageUrl, !isMsgLastLevel);
-             if (!isMsgLastLevel) await setStrWithExInRedis(messageUrl, JSON.stringify(page));
+             if (!isMsgLastLevel && !page.error) await setStrWithExInRedis(messageUrl, JSON.stringify(page));
         } else page = JSON.parse(page);
 
         const newPageObj = {
@@ -95,7 +96,7 @@ const getLinksAndAddPageToTree = async (message, queueRedisHashKey, queueTreeFie
         const treeJSON = await getHashValFromRedis(queueRedisHashKey, queueTreeField);
 
         const isUrlInTree = treeJSON.includes(`,"url":"${messageUrl}"`)
-        if (!isUrlInTree && !isMsgLastLevel) newPageObj.children = [];
+        if (!isUrlInTree && !isMsgLastLevel) newPageObj.children = page.error || [];
 
         const updatedTree = getUpdatedJsonTree(treeJSON, newPageObj, parentUrl);
         await setHashStrValInRedis(queueRedisHashKey, queueTreeField, updatedTree);
@@ -125,7 +126,6 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
         // If reached next level, stop to check if all other workers have reached it as well
         let currentLevel = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[2]);
         currentLevel = parseInt(currentLevel);
-        if (messageLevel < currentLevel) console.log("\n\n\n\n\n\n\n\n***********\n\n\n\n\n\n\n\n");
         if (messageLevel > currentLevel) {
             console.log('\n reached next level \n');
             await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6]);
@@ -210,7 +210,10 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
             const messages = await pollMessagesFromQueue(queueUrl);
 
             if (messages.length === 0) {
-                // Might be that all the messages were polled (by other crawlers) but not processed yet (because they reached next level and are waiting for this one to update), if so, than increment the counter and re-try
+                // Could have simplify this section by using GetQueueAttributes (using sqs api),
+                // but it would not work properly because I am deleting the messages before processing them.
+
+                // Might be that all the messages were polled and deleted (by other crawlers) but not processed yet (because they reached next level and are waiting for this one to update), if so, than increment the counter and re-try
                 let workersMap = await getWrkCounterAndWrkReachedNextLvl(queueRedisHashKey, [allQueueHashFields[0], allQueueHashFields[6]]);
                 if (!wasQueueEmptyPrevPoll && workersMap.workersCounter !== 1 && workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
                     await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[6]);
@@ -219,7 +222,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 } else if (wasQueueEmptyPrevPoll && workersMap.workersCounter !== 1 && workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) continue;
                 
                 await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[1], 'true');
-                break; // Exit condition
+                break; // Exit
             }
 
             if (wasQueueEmptyPrevPoll) {
@@ -227,16 +230,34 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 wasQueueEmptyPrevPoll = false;
             }
 
-            // Get object that holds the message info
+            // Extract info from messages that holds the message info
             let messagesInfoArr = [];
-            for (let message of messages) {
+            let messagesDeleteObjects = [];
+            for (let i = 0; i < messages.length; i++) {
+                let message = messages[i];
                 messagesInfoArr.push({
                     url: message.Body,
                     level: parseInt(message.MessageAttributes.level.StringValue),
                     parentUrl: message.MessageAttributes.parentUrl.StringValue
                 });
+                messagesDeleteObjects.push({
+                    Id: `${i}`,
+                    ReceiptHandle: message.ReceiptHandle
+                })
             }
-            await deleteMessagesFromQueue(queueUrl, messages);
+            // Deleting the messages before processing, so other crawlers could get the messages
+            try {
+                const failedMessages = await deleteMessagesBatchFromQueue(queueUrl, messagesDeleteObjects);
+
+                messagesDeleteObjects = [];
+                failedMessages.forEach(message => {
+                    messagesDeleteObjects.push(messages[parseInt(message.Id)]);
+                });
+                if (failedMessages.length != 0) await deleteMessagesFromQueue(queueUrl, messagesDeleteObjects);
+            } catch (e) {
+                console.log(e, '246');
+                await deleteMessagesFromQueue(queueUrl, messages);
+            }
 
             for (let message of messagesInfoArr) {
                 await processMessage(message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth);

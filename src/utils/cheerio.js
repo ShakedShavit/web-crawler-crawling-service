@@ -36,10 +36,10 @@ const getPageInfo = async (url, isIncludingLinks = true) => {
             });
         }
 
-        return { 'title': title, 'links': links };
+        return { title: title, links: links };
     } catch (err) {
-        console.log(err);
-        throw new Error(err.message);
+        console.log(err.message);
+        return { title: 'could not fetch information', links: [], error: 'could not fetch information' };
     }
 }
 

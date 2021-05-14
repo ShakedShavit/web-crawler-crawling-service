@@ -6,9 +6,14 @@ const sqs = new AWS.SQS({
 });
 
 const sendMessageToQueue = async (QueueUrl, url, level, parentUrl, pageCounter) => {
-    let MessageDeduplicationId = `${parentUrl},${url.slice(4)},${level},${pageCounter + 1}`;
+    const workerId = process.env.WORKER_ID || 0;
+    // workerId and pageCounter should suffice (but the more info the less it is likely that the id will be a duplicate)
+    let MessageDeduplicationId = `${url.slice(4)},${level},${workerId},${pageCounter + 1}`;
+    // Removes all non alphanumeric and punctuation characters
+    MessageDeduplicationId = MessageDeduplicationId.replace(/[^.,\/#!$%\^&\*;:{}=\-_`~()\w]/g, '')
     let messageIdLen = MessageDeduplicationId.length;
     if (messageIdLen > 128) MessageDeduplicationId = MessageDeduplicationId.slice(messageIdLen - 128);
+    console.log(MessageDeduplicationId);
     try {
         const { MessageId } = await sqs.sendMessage({
             QueueUrl,
@@ -73,8 +78,23 @@ const deleteMessagesFromQueue = async (QueueUrl, messages) => {
     }
 }
 
+const deleteMessagesBatchFromQueue = async (QueueUrl, messages) => {
+    try {
+        const { BatchResultErrorEntry } = await sqs.deleteMessageBatch({
+            QueueUrl,
+            Entries: messages
+        }).promise();
+
+        return BatchResultErrorEntry || [];
+    } catch (err) {
+        console.log(err);
+        throw new Error(err);
+    }
+}
+
 module.exports = {
     sendMessageToQueue,
     pollMessagesFromQueue,
-    deleteMessagesFromQueue
+    deleteMessagesFromQueue,
+    deleteMessagesBatchFromQueue
 };
