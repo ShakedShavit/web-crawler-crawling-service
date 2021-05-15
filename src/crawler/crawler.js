@@ -16,6 +16,7 @@ const {
     waitForWorkersToReachNextLevel,
     getHasReachedMaxLevel,
     getHasReachedMaxPages,
+    getHasReachedLimits,
     getLinksAndAddPageToTree
 } = require('../crawler/utils');
 
@@ -125,8 +126,8 @@ const crawl = async (queueUrl) => {
 
         await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[0]);
 
-        let wasQueueEmptyPrevPoll = false;
         let isCrawlingDone = 'false';
+        let wasQueueEmptyPrevPoll = false;
         let hasReachedMaxLevel = false;
         let hasReachedMaxPages = false;
         do {
@@ -137,8 +138,14 @@ const crawl = async (queueUrl) => {
 let date = new Date();
 console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
 
-            hasReachedMaxLevel = hasReachedMaxLevel || await getHasReachedMaxLevel(queueRedisHashKey, allQueueHashFields[2], maxDepth, -1);
-            hasReachedMaxPages = hasReachedMaxPages || await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, -1);
+            // if (!hasReachedMaxLevel && !hasReachedMaxPages) {
+            //     let limits = await getHasReachedLimits(queueRedisHashKey, allQueueHashFields, maxDepth, maxPages);
+            //     hasReachedMaxLevel = limits[0];
+            //     hasReachedMaxPages = limits[1];
+            // } else {
+            //     hasReachedMaxLevel = hasReachedMaxLevel || await getHasReachedMaxLevel(queueRedisHashKey, allQueueHashFields[2], maxDepth, -1);
+            //     hasReachedMaxPages = hasReachedMaxPages || await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, -1);
+            // }
 
             const messages = await pollMessagesFromQueue(queueUrl, hasReachedMaxLevel || hasReachedMaxPages ? 10 : 3);
 
@@ -179,18 +186,17 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 })
             }
             // Deleting the messages before processing, so other crawlers could get the messages
-            try {
-                const failedMessages = await deleteMessagesBatchFromQueue(queueUrl, messagesDeleteObjects);
-
-                messagesDeleteObjects = [];
-                failedMessages.forEach(message => {
-                    messagesDeleteObjects.push(messages[parseInt(message.Id)]);
-                });
-                if (failedMessages.length != 0) await deleteMessagesFromQueue(queueUrl, messagesDeleteObjects);
-            } catch (e) {
-                console.log(e, '246');
-                await deleteMessagesFromQueue(queueUrl, messages);
-            }
+            deleteMessagesBatchFromQueue(queueUrl, messagesDeleteObjects);
+            // .then(({ BatchResultErrorEntry }) => {
+            //     messagesDeleteObjects = [];
+            //     BatchResultErrorEntry.forEach(message => {
+            //         messagesDeleteObjects.push(messages[parseInt(message.Id)]);
+            //     });
+            //     if (BatchResultErrorEntry.length != 0) deleteMessagesFromQueue(queueUrl, messagesDeleteObjects);
+            // })
+            // .catch(err => {
+            //     deleteMessagesFromQueue(queueUrl, messages);
+            // });
             console.log('deleting messages', messages.length);
 
             for (let message of messagesInfoArr) {

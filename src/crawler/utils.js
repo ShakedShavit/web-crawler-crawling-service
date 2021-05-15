@@ -47,15 +47,16 @@ const getHasReachedMaxPages = async (queueRedisHashKey, pageCounterField, maxPag
     } catch (err) { return false; }
 }
 
-// const getHasReachedLimits = async (queueRedisHashKey, allQueueHashFields, maxDepth, maxPages, currLevel = -1) => {
-//     try {
-//         if (await getHasReachedMaxPages(maxPages, queueRedisHashKey, allQueueHashFields[3])) return true;
-
-//         return getHasReachedMaxLevel(maxDepth, parseInt(currLevel));
-//     } catch (err) {
-//         return false;
-//     }
-// }
+const getHasReachedLimits = async (queueRedisHashKey, allQueueHashFields, maxDepth, maxPages) => {
+    try {
+        const [currLevel, pageCounter] = await getHashValuesFromRedis(queueRedisHashKey, [allQueueHashFields[2], allQueueHashFields[3]]);
+        const hasReachedMaxLevel = await getHasReachedMaxLevel(queueRedisHashKey, allQueueHashFields[2], maxDepth, currLevel);
+        const hasReachedMaxPages = await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, pageCounter);
+        return [hasReachedMaxLevel, hasReachedMaxPages];
+    } catch (err) {
+        return false;
+    }
+}
 
 // Add new page obj directly to JSON formatted tree (without parsing it)
 const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
@@ -105,5 +106,6 @@ module.exports = {
     waitForWorkersToReachNextLevel,
     getHasReachedMaxLevel,
     getHasReachedMaxPages,
+    getHasReachedLimits,
     getLinksAndAddPageToTree
 }

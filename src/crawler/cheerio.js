@@ -9,7 +9,7 @@ const getPageInfo = async (url, isIncludingLinks = true) => {
         const res = await fetch(url);
         const html = await res.text();
         const $ = cheerio.load(html);
-    
+
         const title = $('title').text();
 
         if (isIncludingLinks) {
@@ -35,7 +35,6 @@ const getPageInfo = async (url, isIncludingLinks = true) => {
                 links.push(hrefVal);
             });
         }
-
         return { title: title, links: links };
     } catch (err) {
         console.log(err.message);

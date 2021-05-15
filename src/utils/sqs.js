@@ -77,14 +77,16 @@ const deleteMessagesFromQueue = async (QueueUrl, messages) => {
     }
 }
 
-const deleteMessagesBatchFromQueue = async (QueueUrl, messages) => {
+const deleteMessagesBatchFromQueue = (QueueUrl, messages) => {
     try {
-        const { BatchResultErrorEntry } = await sqs.deleteMessageBatch({
+        return sqs.deleteMessageBatch({
             QueueUrl,
             Entries: messages
         }).promise();
+        // .then(({ BatchResultErrorEntry }) => { return BatchResultErrorEntry })
+        // .catch(err => { throw new Error(err) });
 
-        return BatchResultErrorEntry || [];
+        // return BatchResultErrorEntry || [];
     } catch (err) {
         console.log(err);
         throw new Error(err);
