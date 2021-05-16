@@ -51,7 +51,7 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
     const messageUrl = message.url;
     const messageLevel = message.level;
     try {
-        const links = await getLinksAndAddPageToTree(message, queueRedisHashKey, allQueueHashFields, hasReachedMaxLevel || hasReachedMaxPages);
+        const links = await getLinksAndAddPageToTree(message, queueRedisHashKey, allQueueHashFields[7], hasReachedMaxLevel || hasReachedMaxPages);
         if (hasReachedMaxLevel) return { hasReachedMaxLevel, hasReachedMaxPages };
 
         // If reached next level, stop to check if all other workers have reached it as well
@@ -70,7 +70,6 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
         }
 
         const linksLength = links.length;
-        // If message level is equal to max level than don't send new messages
         if (!links || linksLength === 0  || hasReachedMaxPages) { hasReachedMaxLevel, hasReachedMaxPages };
         
         const linksLevel = messageLevel + 1;
@@ -83,16 +82,16 @@ const processMessage = async (message, queueUrl, queueRedisHashKey, allQueueHash
             if ((i !== 0 && links.slice(0, i).includes(link))) continue;
             try {
                 pageCounter = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[3]);
-                // If crawl limits have been reached
-                if (await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, pageCounter)) return { hasReachedMaxLevel, hasReachedMaxPages: true }; // Exit
+                if (await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, pageCounter))
+                    return { hasReachedMaxLevel, hasReachedMaxPages: true }; // Exit
                 
-                await sendMessageToQueue(queueUrl, link, linksLevel, messageUrl, pageCounter);
+                await sendMessageToQueue(queueUrl, link, linksLevel, messageUrl, parseInt(pageCounter));
             } catch (err) {
                 if (++linkErrCounter > 2 && linksLength > 2) throw new Error(err);
                 continue; // Do not increment page counter
             }
             // Update page counter
-            if (!!maxPages) await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[3]);
+            await incHashIntValInRedis(queueRedisHashKey, allQueueHashFields[3]);
         }
 
         return { hasReachedMaxLevel, hasReachedMaxPages };
@@ -183,10 +182,10 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 messagesDeleteObjects.push({
                     Id: `${i}`,
                     ReceiptHandle: message.ReceiptHandle
-                })
+                });
             }
             // Deleting the messages before processing, so other crawlers could get the messages
-            deleteMessagesBatchFromQueue(queueUrl, messagesDeleteObjects);
+            deleteMessagesBatchFromQueue(queueUrl, messagesDeleteObjects)
             // .then(({ BatchResultErrorEntry }) => {
             //     messagesDeleteObjects = [];
             //     BatchResultErrorEntry.forEach(message => {
@@ -200,6 +199,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
             console.log('deleting messages', messages.length);
 
             for (let message of messagesInfoArr) {
+                console.log('*********LOOP');
                 ({ hasReachedMaxLevel, hasReachedMaxPages } = await processMessage(message, queueUrl, queueRedisHashKey, allQueueHashFields, maxPages, maxDepth, hasReachedMaxLevel, hasReachedMaxPages));
                 console.log({ hasReachedMaxLevel, hasReachedMaxPages });
             }

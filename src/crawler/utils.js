@@ -69,7 +69,7 @@ const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
     return treeJSON.slice(0, insertIndex) + newPageJSON + treeJSON.slice(insertIndex);
 }
 
-const getLinksAndAddPageToTree = async (message, queueRedisHashKey, allQueueHashFields, hasReachedLimit = false) => {
+const getLinksAndAddPageToTree = async (message, queueRedisHashKey, treeQueueField, hasReachedLimit = false) => {
     const messageUrl = message.url;
     const messageLevel = message.level;
     const parentUrl = message.parentUrl;
@@ -86,13 +86,13 @@ const getLinksAndAddPageToTree = async (message, queueRedisHashKey, allQueueHash
             level: messageLevel,
             url: messageUrl
         };
-        const treeJSON = await getHashValFromRedis(queueRedisHashKey, allQueueHashFields[7]);
+        const treeJSON = await getHashValFromRedis(queueRedisHashKey, treeQueueField);
 
         const isUrlInTree = treeJSON.includes(`,"url":"${messageUrl}"`)
         if (!isUrlInTree && !hasReachedLimit) newPageObj.children = page.error || [];
 
         const updatedTree = getUpdatedJsonTree(treeJSON, newPageObj, parentUrl);
-        await setHashStrValInRedis(queueRedisHashKey, allQueueHashFields[7], updatedTree);
+        await setHashStrValInRedis(queueRedisHashKey, treeQueueField, updatedTree);
 
         return isUrlInTree ? [] : page.links;
     } catch (err) {
