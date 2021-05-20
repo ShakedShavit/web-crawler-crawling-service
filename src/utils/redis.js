@@ -28,8 +28,7 @@ const getHashValFromRedis = async (hashKey, field) => {
 
 const doesKeyExistInRedis = async (key) => {
     try {
-        const doesKeyExist = await redisClient.existsAsync(key);
-        return doesKeyExist;
+        return await redisClient.existsAsync(key);
     } catch (err) {
         throw new Error(err.message);
     }
@@ -65,6 +64,7 @@ const setHashStrValInRedis = async (hashKey, field, value) => {
 
         await redisClient.hsetAsync(hashKey, field, value);
         if (field !== 'tree') console.log('set', field, value, '67');
+        else console.log(value.length, 'NEW TREE LENGTH')
         return value;
     } catch (err) {
         console.log(err.message, '50');
@@ -108,6 +108,14 @@ const getLastElOfListAndPushItToDestListInRedis = async (sourceKey, destKey = so
     }
 }
 
+const appendElementsToListInRedis = async (key, elementsArr) => {
+    try {
+        await redisClient.rpushAsync(key, ...elementsArr);
+    } catch (err) {
+        throw new Error(err.message);
+    }
+}
+
 module.exports = {
     doesKeyExistInRedis,
     getHashValuesFromRedis,
@@ -116,5 +124,6 @@ module.exports = {
     setHashStrValInRedis,
     getStrValFromRedis,
     setStrWithExInRedis,
-    getLastElOfListAndPushItToDestListInRedis
+    getLastElOfListAndPushItToDestListInRedis,
+    appendElementsToListInRedis
 }

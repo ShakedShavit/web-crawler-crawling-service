@@ -5,7 +5,7 @@ const sqs = new AWS.SQS({
     region: process.env.AWS_REGION
 });
 
-const sendMessageToQueue = async (QueueUrl, url, level, parentUrl, pageCounter) => {
+const sendMessageToQueue = (QueueUrl, url, level, parentUrl, pageCounter) => {
     const workerId = process.env.WORKER_ID || 0;
     // workerId and pageCounter should suffice (but the more info the less it is likely that the id will be a duplicate)
     let MessageDeduplicationId = `${url.slice(4)},${level},${workerId},${pageCounter + 1}`;
@@ -14,7 +14,7 @@ const sendMessageToQueue = async (QueueUrl, url, level, parentUrl, pageCounter) 
     let messageIdLen = MessageDeduplicationId.length;
     if (messageIdLen > 128) MessageDeduplicationId = MessageDeduplicationId.slice(messageIdLen - 128);
     try {
-        const { MessageId } = await sqs.sendMessage({
+        return sqs.sendMessage({
             QueueUrl,
             MessageAttributes: {
                 'level': {
@@ -30,8 +30,6 @@ const sendMessageToQueue = async (QueueUrl, url, level, parentUrl, pageCounter) 
             MessageGroupId: '0', // Every message should have the same group ID
             MessageDeduplicationId
         }).promise();
-
-        return MessageId;
     } catch (err) {
         console.log(err);
         throw new Error(err.message);

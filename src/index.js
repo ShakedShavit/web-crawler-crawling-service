@@ -24,22 +24,43 @@ const getQueueUrlFromRedis = (queueUrlListKey) => {
 
 const startCrawlingProcess = async () => {
     const queueListKey = 'queue-url-list';
+    const crawlInfo = {
+        queueHashFields: [
+            'workersCounter',
+            'isCrawlingDone',
+            'currentLevel',
+            'pageCounter',
+            'maxPages',
+            'maxDepth',
+            'workersReachedNextLevelCounter',
+            'tree'
+        ],
+        hasReachedMaxLevel: false,
+        hasReachedMaxPages: false,
+        processesRunning: 0,
+        
+        get queueRedisHashKey() { return `queue-workers:${this.queueUrl}`; },
+        get treeRedisListKey() { return `pages-list:${this.queueUrl}`; },
+        get areProcessesDone() { return this.processesRunning === 0; },
+        get hasReachedLimit() { return this.hasReachedMaxLevel || this.hasReachedMaxPages; }
+    }
 
     while (true) {
-        let queueUrl;
         try {
-            queueUrl = await getQueueUrlFromRedis(queueListKey);
+            crawlInfo.queueUrl = await getQueueUrlFromRedis(queueListKey);
         } catch (err) {
             await new Promise(resolve => setTimeout(resolve, 2000));
             continue;
         }
 
         try {
-            console.time(queueUrl);
-            await crawl(queueUrl);
-            console.timeEnd(queueUrl);
+            console.time('a');
+            console.log(crawlInfo);
+            await crawl(crawlInfo);
+            console.timeEnd('a');
             await new Promise(resolve => setTimeout(resolve, 2000));
         } catch (err) {
+            console.timeEnd('a');
             console.log(err.message, err, '64');
             continue;
         }

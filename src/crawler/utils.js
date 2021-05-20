@@ -2,9 +2,9 @@ const {
     getHashValuesFromRedis,
     getHashValFromRedis,
     incHashIntValInRedis,
-    setHashStrValInRedis,
     getStrValFromRedis,
-    setStrWithExInRedis
+    setStrWithExInRedis,
+    appendElementsToListInRedis
 } = require('../utils/redis');
 const getPageInfo = require('./cheerio');
 
@@ -47,17 +47,6 @@ const getHasReachedMaxPages = async (queueRedisHashKey, pageCounterField, maxPag
     } catch (err) { return false; }
 }
 
-const getHasReachedLimits = async (queueRedisHashKey, allQueueHashFields, maxDepth, maxPages) => {
-    try {
-        const [currLevel, pageCounter] = await getHashValuesFromRedis(queueRedisHashKey, [allQueueHashFields[2], allQueueHashFields[3]]);
-        const hasReachedMaxLevel = await getHasReachedMaxLevel(queueRedisHashKey, allQueueHashFields[2], maxDepth, currLevel);
-        const hasReachedMaxPages = await getHasReachedMaxPages(queueRedisHashKey, allQueueHashFields[3], maxPages, pageCounter);
-        return [hasReachedMaxLevel, hasReachedMaxPages];
-    } catch (err) {
-        return false;
-    }
-}
-
 // Add new page obj directly to JSON formatted tree (without parsing it)
 const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
     let newPageJSON = JSON.stringify(newPageObj);
@@ -69,7 +58,7 @@ const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
     return treeJSON.slice(0, insertIndex) + newPageJSON + treeJSON.slice(insertIndex);
 }
 
-const getLinksAndAddPageToTree = async (message, queueRedisHashKey, treeQueueField, hasReachedLimit = false) => {
+const getLinksAndAddPageToTree = async (message, treeRedisListKey, hasReachedLimit = false) => {
     const messageUrl = message.url;
     const messageLevel = message.level;
     const parentUrl = message.parentUrl;
@@ -77,28 +66,39 @@ const getLinksAndAddPageToTree = async (message, queueRedisHashKey, treeQueueFie
         // Get page from db, and if it doesn't exist than create it and save it on db
         let page = await getStrValFromRedis(messageUrl);
         if (!page) {
-            page = await getPageInfo(messageUrl, !hasReachedLimit);
-            if (!hasReachedLimit && !page.error) await setStrWithExInRedis(messageUrl, JSON.stringify(page));
+            page = await getPageInfo(messageUrl);
+            if (!page.error) setStrWithExInRedis(messageUrl, JSON.stringify(page));
         } else page = JSON.parse(page);
 
         const newPageObj = {
             title: page.title,
             level: messageLevel,
-            url: messageUrl
+            url: messageUrl,
+            parentUrl
         };
-        const treeJSON = await getHashValFromRedis(queueRedisHashKey, treeQueueField);
+        if (!hasReachedLimit) newPageObj.children = page.error || [];
 
-        const isUrlInTree = treeJSON.includes(`,"url":"${messageUrl}"`)
-        if (!isUrlInTree && !hasReachedLimit) newPageObj.children = page.error || [];
 
-        const updatedTree = getUpdatedJsonTree(treeJSON, newPageObj, parentUrl);
-        await setHashStrValInRedis(queueRedisHashKey, treeQueueField, updatedTree);
+        appendElementsToListInRedis(treeRedisListKey, [JSON.stringify(newPageObj)]);
 
-        return isUrlInTree ? [] : page.links;
+        // let treeJSON = await getHashValFromRedis(queueRedisHashKey, treeQueueField);
+
+        // let isUrlInTree = treeJSON.includes(`,"url":"${messageUrl}"`);
+        // if (!isUrlInTree && !hasReachedLimit) newPageObj.children = page.error || [];
+
+        // let updatedTree = getUpdatedJsonTree(treeJSON, newPageObj, parentUrl);
+        // await setHashStrValInRedis(queueRedisHashKey, treeQueueField, updatedTree);
+
+        return page.links;
     } catch (err) {
         console.log(err);
         return [];
     }
+}
+
+const getHasReachedNextLevel = async (messageLevel, queueRedisHashKey, currLvlQueueField) => {
+    let currentLevel = await getHashValFromRedis(queueRedisHashKey, currLvlQueueField);
+    return messageLevel > parseInt(currentLevel);
 }
 
 module.exports = {
@@ -106,6 +106,6 @@ module.exports = {
     waitForWorkersToReachNextLevel,
     getHasReachedMaxLevel,
     getHasReachedMaxPages,
-    getHasReachedLimits,
-    getLinksAndAddPageToTree
+    getLinksAndAddPageToTree,
+    getHasReachedNextLevel
 }
