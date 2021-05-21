@@ -8,6 +8,11 @@ const {
 } = require('../utils/redis');
 const getPageInfo = require('./cheerio');
 
+const getHasReachedNextLevel = async (messageLevel, queueRedisHashKey, currLvlQueueField) => {
+    let currentLevel = await getHashValFromRedis(queueRedisHashKey, currLvlQueueField);
+    return messageLevel > parseInt(currentLevel);
+}
+
 const getWrkCounterAndWrkReachedNextLvl = async (hashKey, workerCountersFieldsArr) => {
     try {
         let [workersCounter, workersReachedNextLevelCounter] = await getHashValuesFromRedis(hashKey, workerCountersFieldsArr);
@@ -17,16 +22,23 @@ const getWrkCounterAndWrkReachedNextLvl = async (hashKey, workerCountersFieldsAr
     }
 }
 
-const waitForWorkersToReachNextLevel = async (hashKey, workerCountersFieldsArr, workersReachedNextLevelCounterField) => {
+const waitForWorkersToReachNextLevel = async (hashKey, queueHashFields, messageLevel) => {
     try {
-        let workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
+        let hasCheckedCurrLvlAgain = false;
+        let workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, [queueHashFields[0], queueHashFields[6]]);
         while (workersMap.workersReachedNextLevelCounter !== workersMap.workersCounter) {
             await new Promise(resolve => setTimeout(resolve, 500));
-            workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, workerCountersFieldsArr);
+            // Checks if the crawler really did reach next level (might be that another worker at the same time has changed the current level)
+            if (!hasCheckedCurrLvlAgain) {
+                if (!await getHasReachedNextLevel(messageLevel, hashKey, queueHashFields[2])) break;
+                hasCheckedCurrLvlAgain = true;
+            }
+            workersMap = await getWrkCounterAndWrkReachedNextLvl(hashKey, [queueHashFields[0], queueHashFields[6]]);
         }
         if (workersMap.workersCounter > 1) await new Promise(resolve => setTimeout(resolve, 1000)); // Gives a chance to the rest of the workers to notice the change
-        await incHashIntValInRedis(hashKey, workersReachedNextLevelCounterField, -1);
+        await incHashIntValInRedis(hashKey, queueHashFields[6], -1);
     } catch(err) {
+        await incHashIntValInRedis(hashKey, queueHashFields[6], -1);
         throw new Error(err.message);
     }
 }
@@ -35,7 +47,7 @@ const getHasReachedMaxLevel = async (queueRedisHashKey, levelField, maxDepth, cu
     if (!maxDepth) return false;
     try {
         if (currLevel === -1) currLevel = await getHashValFromRedis(queueRedisHashKey, levelField);
-        return parseInt(currLevel) >= maxDepth - 1;
+        return parseInt(currLevel) >= maxDepth;
     } catch(err) { return false; }
 }
 
@@ -45,17 +57,6 @@ const getHasReachedMaxPages = async (queueRedisHashKey, pageCounterField, maxPag
         if (pageCounter === -1) pageCounter = await getHashValFromRedis(queueRedisHashKey, pageCounterField);
         return parseInt(pageCounter) >= maxPages;
     } catch (err) { return false; }
-}
-
-// Add new page obj directly to JSON formatted tree (without parsing it)
-const getUpdatedJsonTree = (treeJSON, newPageObj, parentUrl) => {
-    let newPageJSON = JSON.stringify(newPageObj);
-    let searchString = `${parentUrl}","children":[`;
-    let insertIndex = treeJSON.indexOf(searchString);
-    if (insertIndex === -1) return newPageJSON; // If the tree is empty (first page insertion)
-    insertIndex += searchString.length;
-    if (treeJSON[insertIndex] === '{') newPageJSON += ',';
-    return treeJSON.slice(0, insertIndex) + newPageJSON + treeJSON.slice(insertIndex);
 }
 
 const getLinksAndAddPageToTree = async (message, treeRedisListKey, hasReachedLimit = false) => {
@@ -78,27 +79,13 @@ const getLinksAndAddPageToTree = async (message, treeRedisListKey, hasReachedLim
         };
         if (!hasReachedLimit) newPageObj.children = page.error || [];
 
-
         appendElementsToListInRedis(treeRedisListKey, [JSON.stringify(newPageObj)]);
-
-        // let treeJSON = await getHashValFromRedis(queueRedisHashKey, treeQueueField);
-
-        // let isUrlInTree = treeJSON.includes(`,"url":"${messageUrl}"`);
-        // if (!isUrlInTree && !hasReachedLimit) newPageObj.children = page.error || [];
-
-        // let updatedTree = getUpdatedJsonTree(treeJSON, newPageObj, parentUrl);
-        // await setHashStrValInRedis(queueRedisHashKey, treeQueueField, updatedTree);
 
         return page.links;
     } catch (err) {
         console.log(err);
         return [];
     }
-}
-
-const getHasReachedNextLevel = async (messageLevel, queueRedisHashKey, currLvlQueueField) => {
-    let currentLevel = await getHashValFromRedis(queueRedisHashKey, currLvlQueueField);
-    return messageLevel > parseInt(currentLevel);
 }
 
 module.exports = {

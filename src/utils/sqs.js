@@ -4,13 +4,12 @@ const sqs = new AWS.SQS({
     apiVersion: '2012-11-05',
     region: process.env.AWS_REGION
 });
-
 const sendMessageToQueue = (QueueUrl, url, level, parentUrl, pageCounter) => {
     const workerId = process.env.WORKER_ID || 0;
     // workerId and pageCounter should suffice (but the more info the less it is likely that the id will be a duplicate)
-    let MessageDeduplicationId = `${url.slice(4)},${level},${workerId},${pageCounter + 1}`;
+    let MessageDeduplicationId = `${url.slice(4)}${level}${workerId}${pageCounter + 1}${Math.random().toString(36).substr(2, 9)}`;
     // Removes all non alphanumeric and punctuation characters
-    MessageDeduplicationId = MessageDeduplicationId.replace(/[^.,\/#!$%\^&\*;:{}=\-_`~()\w]/g, '')
+    MessageDeduplicationId = MessageDeduplicationId.replace(/[^.,\/#!$%\^&\*;:{}=\-_`~()\w]/g, '');
     let messageIdLen = MessageDeduplicationId.length;
     if (messageIdLen > 128) MessageDeduplicationId = MessageDeduplicationId.slice(messageIdLen - 128);
     try {

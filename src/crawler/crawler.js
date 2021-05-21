@@ -72,9 +72,8 @@ const processMessage = async (message, links = [], crawlInfo) => {
         crawlInfo.processesRunning++;
         sendMessageToQueue(crawlInfo.queueUrl, link, linksLevel, messageUrl, parseInt(pageCounter))
             .catch(async (res) => {
-                if (!!crawlInfo.maxPages && !crawlInfo.hasReachedLimit) {
+                if (!!crawlInfo.maxPages && !crawlInfo.hasReachedLimit)
                     await incHashIntValInRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3], -1);
-                }
             })
             .finally(() => crawlInfo.processesRunning-- );
         // Update page counter
@@ -99,9 +98,7 @@ const crawl = async (crawlInfo) => {
         crawlInfo.maxPages = maxPages;
         crawlInfo.maxDepth = maxDepth;
         crawlInfo.currentLevel = currentLevel;
-    } catch (err) {
-        throw new Error(err);
-    }
+    } catch (err) { throw new Error(err); }
 
     try {
         await incHashIntValInRedis(queueRedisHashKey, queueHashFields[0]);
@@ -128,6 +125,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 
                 while (!crawlInfo.areProcessesDone)
                     await new Promise(resolve => setTimeout(resolve, 1500));
+
                 await setHashStrValInRedis(queueRedisHashKey, queueHashFields[1], 'true');
                 break;
             }
@@ -163,7 +161,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 if (BatchResultErrorEntry.length != 0) {
                     deleteMessagesFromQueue(crawlInfo.queueUrl, messagesDeleteObjects)
                     .finally(() => crawlInfo.processesRunning--);
-                } else crawlInfo.processesRunning--
+                } else crawlInfo.processesRunning--;
             })
             .catch(err => {
                 deleteMessagesFromQueue(crawlInfo.queueUrl, messages)
@@ -180,13 +178,13 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
 
                     console.log('\n reached next level \n');
                     await incHashIntValInRedis(queueRedisHashKey, queueHashFields[6]);
-                    await waitForWorkersToReachNextLevel(queueRedisHashKey, [queueHashFields[0], queueHashFields[6]], queueHashFields[6]);
+                    await waitForWorkersToReachNextLevel(queueRedisHashKey, crawlInfo.queueHashFields, messageLevel);
 
                     // If no other worker has changes the current level in hash yet, than increment it (make it equal to message level)
                     let newCurrentLevel = await getHashValFromRedis(queueRedisHashKey, queueHashFields[2]);
                     if (parseInt(newCurrentLevel) !== messageLevel) await setHashStrValInRedis(queueRedisHashKey, queueHashFields[2], `${messageLevel}`);
                     console.log('newCurrentLevel: ', newCurrentLevel, " is changing it:", parseInt(newCurrentLevel) !== messageLevel);
-                    if (await getHasReachedMaxLevel(queueRedisHashKey, queueHashFields[2], crawlInfo.maxDepth, newCurrentLevel))
+                    if (await getHasReachedMaxLevel(queueRedisHashKey, queueHashFields[2], crawlInfo.maxDepth, messageLevel))
                         crawlInfo.hasReachedMaxLevel = true;
                 }
 
