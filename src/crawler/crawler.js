@@ -175,7 +175,6 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 let messageLevel = message.level;
                 // If reached next level, stop to check if all other workers have reached it as well
                 if (!crawlInfo.hasReachedMaxLevel && await getHasReachedNextLevel(messageLevel, queueRedisHashKey, queueHashFields[2])) {
-                    console.log("\n\n*******\n\n", crawlInfo.processesRunning, crawlInfo.areProcessesDone);
                     while (!crawlInfo.areProcessesDone)
                         await new Promise(resolve => setTimeout(resolve, 1500));
 
