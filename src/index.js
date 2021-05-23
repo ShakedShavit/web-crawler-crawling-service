@@ -24,34 +24,37 @@ const getQueueUrlFromRedis = (queueUrlListKey) => {
 
 const startCrawlingProcess = async () => {
     const queueListKey = 'queue-url-list';
-    const crawlInfo = {
-        queueHashFields: [
-            'workersCounter',
-            'isCrawlingDone',
-            'currentLevel',
-            'pageCounter',
-            'maxPages',
-            'maxDepth',
-            'workersReachedNextLevelCounter',
-            'tree'
-        ],
-        hasReachedMaxLevel: false,
-        hasReachedMaxPages: false,
-        processesRunning: 0,
-        
-        get queueRedisHashKey() { return `queue-workers:${this.queueUrl}`; },
-        get treeRedisListKey() { return `pages-list:${this.queueUrl}`; },
-        get areProcessesDone() { return this.processesRunning === 0; },
-        get hasReachedLimit() { return this.hasReachedMaxLevel || this.hasReachedMaxPages; }
-    }
-
+    let crawlInfo = {};
+    let queueUrl;
     while (true) {
         try {
-            crawlInfo.queueUrl = await getQueueUrlFromRedis(queueListKey);
+            queueUrl = await getQueueUrlFromRedis(queueListKey);
         } catch (err) {
             await new Promise(resolve => setTimeout(resolve, 2000));
             continue;
         }
+
+        crawlInfo = {
+            queueUrl,
+            queueHashFields: [
+                'workersCounter',
+                'isCrawlingDone',
+                'currentLevel',
+                'pageCounter',
+                'maxPages',
+                'maxDepth',
+                'workersReachedNextLevelCounter',
+                'tree'
+            ],
+            hasReachedMaxLevel: false,
+            hasReachedMaxPages: false,
+            processesRunning: 0,
+            
+            get queueRedisHashKey() { return `queue-workers:${this.queueUrl}`; },
+            get treeRedisListKey() { return `pages-list:${this.queueUrl}`; },
+            get areProcessesDone() { return this.processesRunning === 0; },
+            get hasReachedLimit() { return this.hasReachedMaxLevel || this.hasReachedMaxPages; }
+        };
 
         try {
             console.time('a');
