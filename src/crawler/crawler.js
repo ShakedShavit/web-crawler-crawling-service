@@ -49,36 +49,51 @@ const {
 //      the entire tree of the queueUrl is saved (in the form of JSON)
 //}
 
+//http://hex2rgba.devoth.com/
 const processMessage = async (message, links = [], crawlInfo) => {
-    const linksLength = links.length;
     if (links.length === 0 || crawlInfo.hasReachedLimit) return;
     const messageUrl = message.url;
     const messageLevel = message.level;
     const linksLevel = messageLevel + 1;
     let pageCounter;
+    let pagesToAddNum = Infinity;
 
-    for (let i = 0; i < linksLength; i++) {
-        let link = links[i];
-        if ((i !== 0 && links.slice(0, i).includes(link))) continue;
-        try {
-            pageCounter = await getHashValFromRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3]);
-            if (await getHasReachedMaxPages(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3], crawlInfo.maxPages, pageCounter)) {
-                crawlInfo.hasReachedMaxPages = true;
-                break; // Exit
-            }
-        } catch (err) {
-            throw new Error(err);
-        }
-        crawlInfo.processesRunning++;
-        sendMessageToQueue(crawlInfo.queueUrl, link, linksLevel, messageUrl, parseInt(pageCounter))
-            .catch(async (res) => {
-                if (!!crawlInfo.maxPages && !crawlInfo.hasReachedLimit)
-                    await incHashIntValInRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3], -1);
-            })
-            .finally(() => crawlInfo.processesRunning-- );
-        // Update page counter
-        await incHashIntValInRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3]);
+    let newLinks = [links[0]];
+    for (let link of links) {
+        if (newLinks.includes(link)) continue;
+        newLinks.push(link);
     }
+    links = newLinks;
+
+    const linksLength = links.length;
+    console.log(message.url, linksLength);
+    try {
+        pageCounter = await getHashValFromRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3], linksLength);
+        pageCounter = parseInt(pageCounter);
+        if (!!crawlInfo.maxPages) pagesToAddNum = crawlInfo.maxPages - pageCounter;
+        let pagesCounterInc = (pagesToAddNum > linksLength || !crawlInfo.maxPages) ? linksLength : pagesToAddNum;
+        
+        if (pagesCounterInc > 0) await incHashIntValInRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3], pagesCounterInc);
+
+        if (await getHasReachedMaxPages(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[3], crawlInfo.maxPages, pageCounter + pagesCounterInc))
+            crawlInfo.hasReachedMaxPages = true;
+        console.log("pagesCounterInc, pagesToAddNum, linksLength, pageCounter", pagesCounterInc, pagesToAddNum, linksLength, pageCounter, "LINKS_LENGTH");
+    } catch (err) {
+        throw new Error(err);
+    }
+
+    let sendMessagePromises = [];
+    for (let i = 0; i < linksLength && i < pagesToAddNum; i++) {
+        let link = links[i];
+        crawlInfo.processesRunning++;
+        sendMessagePromises.push(sendMessageToQueue(crawlInfo.queueUrl, link, linksLevel, messageUrl, pageCounter + i));
+    }
+    return new Promise((resolve, reject) => {
+        Promise.allSettled(sendMessagePromises).then(() => {
+            crawlInfo.processesRunning -= sendMessagePromises.length;
+            resolve();
+        });
+    });
 }
 
 const crawl = async (crawlInfo) => {
@@ -135,6 +150,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 wasQueueEmptyPrevPoll = false;
             }
 
+            //#region Extracting messages information
             // Extract info from messages that holds the message info
             let messagesInfoArr = [];
             let messagesDeleteObjects = [];
@@ -150,15 +166,17 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                     ReceiptHandle: message.ReceiptHandle
                 });
             }
+            //#endregion
+            //#region Deleting messages
             // Deleting the messages before processing, so other crawlers could get the messages
             crawlInfo.processesRunning++;
             deleteMessagesBatchFromQueue(crawlInfo.queueUrl, messagesDeleteObjects)
-            .then(({ BatchResultErrorEntry }) => {
+            .then(({ Failed }) => {
                 messagesDeleteObjects = [];
-                BatchResultErrorEntry.forEach(message => {
+                Failed.forEach(message => {
                     messagesDeleteObjects.push(messages[parseInt(message.Id)]);
                 });
-                if (BatchResultErrorEntry.length != 0) {
+                if (Failed.length !== 0) {
                     deleteMessagesFromQueue(crawlInfo.queueUrl, messagesDeleteObjects)
                     .finally(() => crawlInfo.processesRunning--);
                 } else crawlInfo.processesRunning--;
@@ -167,14 +185,24 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 deleteMessagesFromQueue(crawlInfo.queueUrl, messages)
                 .finally(() => crawlInfo.processesRunning--);
             });
-            console.log('deleting messages', messages.length);
-
+            //#endregion
+            let getLinksPromises = [];
             for (let message of messagesInfoArr) {
+                getLinksPromises.push(new Promise((resolve, reject) => {
+                    getLinksAndAddPageToTree(message, crawlInfo.treeRedisListKey, crawlInfo.hasReachedLimit)
+                    .then((links) => resolve(links))
+                    .catch((err) => reject(err));
+                }));
+            }
+            for (let i = 0; i < messagesInfoArr.length; i++) {
+                let message = messagesInfoArr[i];
                 let messageLevel = message.level;
                 // If reached next level, stop to check if all other workers have reached it as well
                 if (!crawlInfo.hasReachedMaxLevel && await getHasReachedNextLevel(messageLevel, queueRedisHashKey, queueHashFields[2])) {
-                    while (!crawlInfo.areProcessesDone)
+                    while (!crawlInfo.areProcessesDone) {
                         await new Promise(resolve => setTimeout(resolve, 1500));
+                        console.log(crawlInfo.processesRunning);
+                    }
 
                     console.log('\n reached next level \n');
                     await incHashIntValInRedis(queueRedisHashKey, queueHashFields[6]);
@@ -188,12 +216,11 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                         crawlInfo.hasReachedMaxLevel = true;
                 }
 
-                crawlInfo.processesRunning++;
-                getLinksAndAddPageToTree(message, crawlInfo.treeRedisListKey, crawlInfo.hasReachedLimit)
-                .then(links => {
-                    processMessage(message, links, crawlInfo).finally(res => crawlInfo.processesRunning-- );
-                });
+                // let links = await getLinksAndAddPageToTree(message, crawlInfo.treeRedisListKey, crawlInfo.hasReachedLimit);
+                let links = await getLinksPromises[i];
+                await processMessage(message, links, crawlInfo);
             }
+            // await deleteMessagesBatchFromQueue(crawlInfo.queueUrl, messagesDeleteObjects);
         } while (isCrawlingDone === 'false'); // while(true) will accomplish the same here
 
         await incHashIntValInRedis(queueRedisHashKey, queueHashFields[0], -1);

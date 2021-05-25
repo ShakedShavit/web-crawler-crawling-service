@@ -78,7 +78,6 @@ const getLinksAndAddPageToTree = async (message, treeRedisListKey, hasReachedLim
             parentUrl
         };
         if (!hasReachedLimit) newPageObj.children = page.error || [];
-
         appendElementsToListInRedis(treeRedisListKey, [JSON.stringify(newPageObj)]);
 
         return page.links;

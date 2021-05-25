@@ -116,6 +116,14 @@ const appendElementsToListInRedis = async (key, elementsArr) => {
     }
 }
 
+const getElementsFromListInRedis = async (key, start = 0, end = -1) => {
+    try {
+        return await redisClient.lrangeAsync(key, start, end);
+    } catch (err) {
+        throw new Error(err.message);
+    }
+}
+
 module.exports = {
     doesKeyExistInRedis,
     getHashValuesFromRedis,
