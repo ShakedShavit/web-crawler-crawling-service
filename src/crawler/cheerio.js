@@ -31,7 +31,7 @@ const getPageInfo = async (url) => {
             else if (hrefVal.slice(0, 4) !== 'http') return;
             if (hrefVal[hrefVal.length - 1] === '/') hrefVal = hrefVal.slice(0, -1);
     
-            links.push(hrefVal);
+            if (!links.includes(hrefVal)) links.push(hrefVal);
         });
         return { title, links };
     } catch (err) {

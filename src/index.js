@@ -37,22 +37,18 @@ const startCrawlingProcess = async () => {
         crawlInfo = {
             queueUrl,
             queueHashFields: [
-                'workersCounter',
                 'isCrawlingDone',
-                'currentLevel',
                 'pageCounter',
                 'maxPages',
                 'maxDepth',
-                'workersReachedNextLevelCounter',
                 'tree'
             ],
             hasReachedMaxLevel: false,
             hasReachedMaxPages: false,
-            processesRunning: 0,
             
             get queueRedisHashKey() { return `queue-workers:${this.queueUrl}`; },
             get treeRedisListKey() { return `pages-list:${this.queueUrl}`; },
-            get areProcessesDone() { return this.processesRunning === 0; },
+            get currProcessingRedisListKey() { return `curr-processes-list:${this.queueUrl}`; },
             get hasReachedLimit() { return this.hasReachedMaxLevel || this.hasReachedMaxPages; }
         };
 

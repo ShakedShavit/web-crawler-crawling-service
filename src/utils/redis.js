@@ -124,6 +124,22 @@ const getElementsFromListInRedis = async (key, start = 0, end = -1) => {
     }
 }
 
+const trimListInRedis = async (key, start = 0, end = -1) => {
+    try {
+        await redisClient.ltrimAsync(key, start, end);
+    } catch (err) {
+        throw new Error(err.message);
+    }
+}
+
+const removeElementFromListInRedis = async (key, element, count = 0) => {
+    try {
+        await redisClient.lremAsync(key, count, element);
+    } catch (err) {
+        throw new Error(err.message);
+    }
+}
+
 module.exports = {
     doesKeyExistInRedis,
     getHashValuesFromRedis,
@@ -133,5 +149,8 @@ module.exports = {
     getStrValFromRedis,
     setStrWithExInRedis,
     getLastElOfListAndPushItToDestListInRedis,
-    appendElementsToListInRedis
-}
+    appendElementsToListInRedis,
+    getElementsFromListInRedis,
+    trimListInRedis,
+    removeElementFromListInRedis
+};
