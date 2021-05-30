@@ -41,6 +41,8 @@ const getLinksAndAddPageToTree = async (message, crawlInfo) => {
         };
         if (!crawlInfo.hasReachedLimit) newPageObj.children = page.error || [];
 
+        // Checks if the link has already been processed or is currently being processed
+        // to avoid having duplicate sub trees inside the main tree (at any level)
         if (!crawlInfo.hasReachedLimit && page.links.length !== 0) {
             const getTreePromise = getHashValFromRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[4]);
             const getNewPagesPromise = getElementsFromListInRedis(crawlInfo.treeRedisListKey, 0, -1);

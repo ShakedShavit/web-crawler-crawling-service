@@ -50,7 +50,6 @@ const {
 //      the entire tree of the queueUrl is saved (in the form of JSON)
 //}
 
-//http://hex2rgba.devoth.com/
 const sendNewMessages = async (message, links = [], crawlInfo) => {
     const { url: messageUrl, level: messageLevel } = message;
     let pagesToAddNum = Infinity;
@@ -73,9 +72,10 @@ const sendNewMessages = async (message, links = [], crawlInfo) => {
     let sendMessagePromises = [];
     for (let i = 0; i < linksLength && i < pagesToAddNum; i++)
         sendMessagePromises.push(sendMessageToQueue(crawlInfo.queueUrl, links[i], messageLevel + 1, messageUrl, pageCounter + i));
-    return new Promise((resolve, reject) => {
-        Promise.allSettled(sendMessagePromises).then(() => resolve());
-    });
+    await Promise.allSettled(sendMessagePromises).then(() => {});
+    // return new Promise((resolve, reject) => {
+    //     Promise.allSettled(sendMessagePromises).then(() => resolve());
+    // });
 }
 
 const crawl = async (crawlInfo) => {
@@ -102,7 +102,6 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
             const messages = await pollMessagesFromQueue(crawlInfo.queueUrl, crawlInfo.hasReachedLimit ? 10 : 3);
             if (messages.length === 0) {
                 let workersProcessingQueue = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, -1);
-                console.log(workersProcessingQueue, '143');
                 if (workersProcessingQueue?.length > 0) continue;
 
                 await setHashStrValInRedis(queueRedisHashKey, queueHashFields[0], 'true');
@@ -150,7 +149,6 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
             if (!crawlInfo.hasReachedLimit) {
                 let currProcessWorker = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, 0);
                 while (currProcessWorker[0] !== `${process.env.WORKER_ID}`) {
-                    console.log(currProcessWorker, 'waiting');
                     await new Promise(resolve => setTimeout(resolve, 1500));
                     currProcessWorker = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, 0);
                 }
@@ -167,6 +165,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 let links = await getLinksPromises[i];
                 if (links.length !== 0) await sendNewMessages(message, links, crawlInfo);
             }
+            await Promise.allSettled(getLinksPromises).then(() => {});
             
             await removeElementFromListInRedis(crawlInfo.currProcessingRedisListKey, `${process.env.WORKER_ID}`, 1);
         } while (true);
