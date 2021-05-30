@@ -56,7 +56,7 @@ const sendNewMessages = async (message, links = [], crawlInfo) => {
     let pageCounter;
     const linksLength = links.length;
 
-    console.log(messageUrl, linksLength);
+    console.log("\n", messageUrl, linksLength);
     try {
         pageCounter = await getHashValFromRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[1]);
         pageCounter = parseInt(pageCounter);
@@ -72,13 +72,11 @@ const sendNewMessages = async (message, links = [], crawlInfo) => {
     let sendMessagePromises = [];
     for (let i = 0; i < linksLength && i < pagesToAddNum; i++)
         sendMessagePromises.push(sendMessageToQueue(crawlInfo.queueUrl, links[i], messageLevel + 1, messageUrl, pageCounter + i));
-    await Promise.allSettled(sendMessagePromises).then(() => {});
-    // return new Promise((resolve, reject) => {
-    //     Promise.allSettled(sendMessagePromises).then(() => resolve());
-    // });
+    await Promise.allSettled(sendMessagePromises);
 }
 
 const crawl = async (crawlInfo) => {
+    const allGetLinksPromises = [];
     const queueRedisHashKey = crawlInfo.queueRedisHashKey;
     const queueHashFields = crawlInfo.queueHashFields;
     try {
@@ -96,14 +94,12 @@ const crawl = async (crawlInfo) => {
             // If other crawlers finished the scraping
             if (await getHashValFromRedis(queueRedisHashKey, queueHashFields[0]) === 'true') break; // Exit condition
     
-let date = new Date();
-console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
-
             const messages = await pollMessagesFromQueue(crawlInfo.queueUrl, crawlInfo.hasReachedLimit ? 10 : 3);
             if (messages.length === 0) {
                 let workersProcessingQueue = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, -1);
                 if (workersProcessingQueue?.length > 0) continue;
 
+                await Promise.allSettled(allGetLinksPromises);
                 await setHashStrValInRedis(queueRedisHashKey, queueHashFields[0], 'true');
                 break;
             }
@@ -165,7 +161,7 @@ console.log('\n* ', date.getMinutes(), date.getSeconds(), ' *\n');
                 let links = await getLinksPromises[i];
                 if (links.length !== 0) await sendNewMessages(message, links, crawlInfo);
             }
-            await Promise.allSettled(getLinksPromises).then(() => {});
+            allGetLinksPromises.push(getLinksPromises);
             
             await removeElementFromListInRedis(crawlInfo.currProcessingRedisListKey, `${process.env.WORKER_ID}`, 1);
         } while (true);
