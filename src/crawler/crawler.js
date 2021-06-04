@@ -15,11 +15,7 @@ const {
     deleteMessagesFromQueue,
     deleteMessagesBatchFromQueue
 } = require('../utils/sqs');
-const {
-    getHasReachedMaxLevel,
-    getHasReachedMaxPages,
-    getLinksAndAddPageToTree,
-} = require('../crawler/utils');
+const getLinksAndAddPageToTree = require('../crawler/utils');
 
 //  pages-list:<queueUrl> - Holds new pages information (as JSON) collected to be added to the tree
 
@@ -50,122 +46,63 @@ const {
 //      the entire tree of the queueUrl is saved (in the form of JSON)
 //}
 
-const sendNewMessages = async (message, links = [], crawlInfo) => {
-    const { url: messageUrl, level: messageLevel } = message;
-    let pagesToAddNum = Infinity;
-    let pageCounter;
-    const linksLength = links.length;
+let arr = [];
 
-    console.log("\n", messageUrl, linksLength);
-    try {
-        pageCounter = await getHashValFromRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[1]);
-        pageCounter = parseInt(pageCounter);
-
-        if (!!crawlInfo.maxPages) pagesToAddNum = crawlInfo.maxPages - pageCounter;
-        let pagesCounterInc = (pagesToAddNum > linksLength || !crawlInfo.maxPages) ? linksLength : pagesToAddNum;
-        if (pagesCounterInc > 0) await incHashIntValInRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[1], pagesCounterInc);
-
-        if (await getHasReachedMaxPages(crawlInfo.maxPages, pageCounter + pagesCounterInc))
-            crawlInfo.hasReachedMaxPages = true;
-    } catch (err) { throw new Error(err); }
-
-    let sendMessagePromises = [];
-    for (let i = 0; i < linksLength && i < pagesToAddNum; i++)
-        sendMessagePromises.push(sendMessageToQueue(crawlInfo.queueUrl, links[i], messageLevel + 1, messageUrl, pageCounter + i));
-    await Promise.allSettled(sendMessagePromises);
+const sendNewMessages = async (messageUrl, messageLevel, nextQueueUrl, links = []) => {
+    console.log("\n", messageUrl, links.length);
+    for (let link of links)
+        sendMessageToQueue(nextQueueUrl, link, messageLevel + 1, messageUrl)
+        .then(() => arr.push(link));
 }
 
 const crawl = async (crawlInfo) => {
-    const allGetLinksPromises = [];
-    const queueRedisHashKey = crawlInfo.queueRedisHashKey;
-    const queueHashFields = crawlInfo.queueHashFields;
-    try {
-        let doesQueueHashExist = await doesKeyExistInRedis(queueRedisHashKey);
-        if (!doesQueueHashExist || doesQueueHashExist === 'false') throw new Error(`${queueRedisHashKey} does not exist in redis`);
-        let [maxPages, maxDepth] = await getHashValuesFromRedis(queueRedisHashKey, [queueHashFields[2], queueHashFields[3]]);
-        if (!!maxPages) maxPages = parseInt(maxPages);
-        if (!!maxDepth) maxDepth = parseInt(maxDepth);
-        crawlInfo.maxPages = maxPages;
-        crawlInfo.maxDepth = maxDepth;
-    } catch (err) { throw new Error(err); }
-
+    const crawlRedisHashKey = crawlInfo.crawlRedisHashKey;
+    const redisHashFields = crawlInfo.redisHashFields;
+    arr = []
     try {
         do {
+            let doesQueueHashExist = await doesKeyExistInRedis(crawlRedisHashKey);
+            if (!doesQueueHashExist || doesQueueHashExist === 'false') throw new Error(`${crawlRedisHashKey} does not exist in redis`);
+
             // If other crawlers finished the scraping
-            if (await getHashValFromRedis(queueRedisHashKey, queueHashFields[0]) === 'true') break; // Exit condition
-    
-            const messages = await pollMessagesFromQueue(crawlInfo.queueUrl, crawlInfo.hasReachedLimit ? 10 : 3);
-            if (messages.length === 0) {
-                let workersProcessingQueue = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, -1);
-                if (workersProcessingQueue?.length > 0) continue;
-
-                await Promise.allSettled(allGetLinksPromises);
-                await setHashStrValInRedis(queueRedisHashKey, queueHashFields[0], 'true');
-                break;
+            let [currQueueUrl, nextQueueUrl, isCrawlingDone] = await getHashValuesFromRedis(crawlRedisHashKey, [redisHashFields[2], redisHashFields[3], redisHashFields[0]]);
+            if (isCrawlingDone === "true") break;
+            console.log(currQueueUrl);
+            //if (isCrawlingDone === 'true') break; // Exit condition
+            // let currLevel = await getHashValFromRedis(crawlRedisHashKey, redisHashFields[1]);
+            let messages;
+            try { messages = await pollMessagesFromQueue(currQueueUrl, 10); }
+            catch (error) {
+                await new Promise(resolve => setTimeout(resolve, 1500));
+                continue;
             }
-            await appendElementsToListInRedis(crawlInfo.currProcessingRedisListKey, [`${process.env.WORKER_ID}`]);
+            //if (messages.length === 0) {
+                //let workersProcessingQueue = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, -1);
+                //if (workersProcessingQueue?.length > 0) continue;
+                //await setHashStrValInRedis(crawlRedisHashKey, redisHashFields[0], 'true');
+            //}
+            deleteMessagesFromQueue(currQueueUrl, messages);
+            //await appendElementsToListInRedis(crawlInfo.currProcessingRedisListKey, [`${process.env.WORKER_ID}`]);
 
-            //#region Extracting messages information
-            // Extract info from messages that holds the message info
-            let messagesDeleteObjects = [];
-            let messagesInfoArr = [];
-            for (let i = 0; i < messages.length; i++) {
-                let message = messages[i];
-                messagesInfoArr.push({
-                    url: message.Body,
-                    level: parseInt(message.MessageAttributes.level.StringValue),
-                    parentUrl: message.MessageAttributes.parentUrl.StringValue
+            for (let message of messages) {
+                let messageUrl = message.Body;
+                let messageLevel = parseInt(message.MessageAttributes.level.StringValue);
+                let parentUrl = message.MessageAttributes.parentUrl.StringValue;
+                getLinksAndAddPageToTree({ messageUrl, messageLevel, parentUrl }, crawlInfo)
+                .then(links => {
+                    if (links.length !== 0) {
+                        if (!!nextQueueUrl) sendNewMessages(messageUrl, messageLevel, nextQueueUrl, links);
+                        // .then(() => removeElementFromListInRedis(crawlInfo.currProcessingRedisListKey, `${process.env.WORKER_ID}`, 1));
+                    } // else {
+                        // removeElementFromListInRedis(crawlInfo.currProcessingRedisListKey, `${process.env.WORKER_ID}`, 1);
+                    // }
                 });
-                messagesDeleteObjects.push({
-                    Id: `${i}`,
-                    ReceiptHandle: message.ReceiptHandle
-                });
             }
-            //#endregion
-            //#region Deleting messages
-            // Deleting the messages before processing, so other crawlers could get the messages
-            deleteMessagesBatchFromQueue(crawlInfo.queueUrl, messagesDeleteObjects)
-            .then(({ Failed }) => {
-                messagesDeleteObjects = [];
-                Failed.forEach(message => messagesDeleteObjects.push(messages[parseInt(message.Id)]) );
-                if (Failed.length !== 0) deleteMessagesFromQueue(crawlInfo.queueUrl, messagesDeleteObjects);
-            })
-            .catch(err => deleteMessagesFromQueue(crawlInfo.queueUrl, messages) );
-            //#endregion
-            
-            let getLinksPromises = [];
-            for (let message of messagesInfoArr) {
-                getLinksPromises.push(new Promise((resolve, reject) => {
-                    getLinksAndAddPageToTree(message, crawlInfo)
-                    .then(links => resolve(links))
-                    .catch(err => reject(err));
-                }));
-            }
-
-            if (!crawlInfo.hasReachedLimit) {
-                let currProcessWorker = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, 0);
-                while (currProcessWorker[0] !== `${process.env.WORKER_ID}`) {
-                    await new Promise(resolve => setTimeout(resolve, 1500));
-                    currProcessWorker = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, 0);
-                }
-            }
-
-            for (let i = 0; i < messagesInfoArr.length; i++) {
-                let message = messagesInfoArr[i];
-                let messageLevel = message.level;
-
-                if (!crawlInfo.hasReachedMaxLevel && await getHasReachedMaxLevel(crawlInfo.maxDepth, messageLevel))
-                    crawlInfo.hasReachedMaxLevel = true;
-
-                if (crawlInfo.hasReachedLimit) continue;
-                let links = await getLinksPromises[i];
-                if (links.length !== 0) await sendNewMessages(message, links, crawlInfo);
-            }
-            allGetLinksPromises.push(getLinksPromises);
-            
-            await removeElementFromListInRedis(crawlInfo.currProcessingRedisListKey, `${process.env.WORKER_ID}`, 1);
         } while (true);
-    } catch (err) { throw new Error(err); } // Would cause re-crawling with new queue
+        console.log("arr", arr);
+    } catch (err) { 
+        console.log("arr", arr);
+        throw new Error(err); } // Would cause re-crawling with new queue
 }
 
 module.exports = crawl;

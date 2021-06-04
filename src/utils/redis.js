@@ -5,9 +5,7 @@ const redisClient = require('../db/redis');
 // get [workersCounter, isCrawlingDone, currentLevel, pageCounter, maxPages, maxLevel]
 const getHashValuesFromRedis = async (hashKey, fieldsArr) => {
     try {
-        const values = await redisClient.hmgetAsync(hashKey, ...fieldsArr);
-        console.log(...fieldsArr, " " , values, '9');
-        return values;
+        return redisClient.hmgetAsync(hashKey, ...fieldsArr);
     } catch (err) {
         console.log(err.message, '12');
         throw new Error(err.message);
@@ -16,10 +14,7 @@ const getHashValuesFromRedis = async (hashKey, fieldsArr) => {
 
 const getHashValFromRedis = async (hashKey, field) => {
     try {
-        const value = await redisClient.hgetAsync(hashKey, field);
-        // if (value == null) throw new Error('value is null or undefined');
-        if (field !== 'tree') console.log('get', field, value, '20');
-        return value;
+        return redisClient.hgetAsync(hashKey, field);
     } catch (err) {
         console.log(err.message, '23');
         throw new Error(err.message);
@@ -28,7 +23,7 @@ const getHashValFromRedis = async (hashKey, field) => {
 
 const doesKeyExistInRedis = async (key) => {
     try {
-        return await redisClient.existsAsync(key);
+        return redisClient.existsAsync(key);
     } catch (err) {
         throw new Error(err.message);
     }
@@ -39,16 +34,15 @@ const incHashIntValInRedis = async (hashKey, field, factor = 1) => {
         const doesKeyExist = await doesKeyExistInRedis(hashKey);
         // Return 0 or 1 (!0 equals True, !1 equals False)
         if (!doesKeyExist) throw new Error('key does not exist in redis');
-
+        
         if (typeof factor !== 'number') {
             let prevFactor = factor;
             factor = parseInt(factor);
             if (isNaN(factor)) throw new Error(`factor's type must be number. factor (${prevFactor}) input is of type ${typeof prevFactor}`);
         }
+        if (factor === 0) return 0;
 
-        const value = await redisClient.hincrbyAsync(hashKey, field, factor);
-        console.log('value:', value, 'factor:', factor, field);
-        return value;
+        return redisClient.hincrbyAsync(hashKey, field, factor);
     } catch (err) {
         console.log(err.message, '37');
         throw new Error(err.message);
@@ -62,10 +56,7 @@ const setHashStrValInRedis = async (hashKey, field, value) => {
 
         if (typeof value !== 'string') throw new Error(`value's type must be string. value (${value}) input is of type ${typeof value}`);
 
-        await redisClient.hsetAsync(hashKey, field, value);
-        if (field !== 'tree') console.log('set', field, value, '67');
-        else console.log(value.length, 'NEW TREE LENGTH')
-        return value;
+        return redisClient.hsetAsync(hashKey, field, value);
     } catch (err) {
         console.log(err.message, '50');
         throw new Error(err.message);
@@ -76,9 +67,7 @@ const setHashStrValInRedis = async (hashKey, field, value) => {
 
 const getStrValFromRedis = async (key) => {
     try {
-        const value = await redisClient.getAsync(key);
-        if (key.slice(0, 4) !== 'http') console.log('get', key, value, '60');
-        return value;
+        return redisClient.getAsync(key);
     } catch (err) {
         console.log(err.message, '62');
         throw new Error(err.message);
@@ -89,7 +78,7 @@ const setStrWithExInRedis = async (key, value, exSec = 300) => {
     try {
         if (typeof value !== 'string') throw new Error(`value's type must be string. value (${value}) input is of type ${typeof value}`);
 
-        await redisClient.setexAsync(key, exSec, value);
+        return redisClient.setexAsync(key, exSec, value);
     } catch (err) {
         console.log(err.message, '73');
         throw new Error(err.message);
@@ -99,9 +88,7 @@ const setStrWithExInRedis = async (key, value, exSec = 300) => {
 // Pops (and returns) last el of list and pushes it in another list (both lists could be the same list)
 const getLastElOfListAndPushItToDestListInRedis = async (sourceKey, destKey = sourceKey) => {
     try {
-        const lastEl = await redisClient.rpoplpushAsync(sourceKey, destKey);
-        if (lastEl == null) throw new Error('source list does not exist or is empty');
-        return lastEl;
+        return redisClient.rpoplpushAsync(sourceKey, destKey);
     } catch (err) {
         console.log(err.message, '106');
         throw new Error(err.message);
@@ -110,7 +97,7 @@ const getLastElOfListAndPushItToDestListInRedis = async (sourceKey, destKey = so
 
 const appendElementsToListInRedis = async (key, elementsArr) => {
     try {
-        await redisClient.rpushAsync(key, ...elementsArr);
+        return redisClient.rpushAsync(key, ...elementsArr);
     } catch (err) {
         throw new Error(err.message);
     }
@@ -118,7 +105,7 @@ const appendElementsToListInRedis = async (key, elementsArr) => {
 
 const getElementsFromListInRedis = async (key, start = 0, end = -1) => {
     try {
-        return await redisClient.lrangeAsync(key, start, end);
+        return redisClient.lrangeAsync(key, start, end);
     } catch (err) {
         throw new Error(err.message);
     }
@@ -126,7 +113,7 @@ const getElementsFromListInRedis = async (key, start = 0, end = -1) => {
 
 const trimListInRedis = async (key, start = 0, end = -1) => {
     try {
-        await redisClient.ltrimAsync(key, start, end);
+        return redisClient.ltrimAsync(key, start, end);
     } catch (err) {
         throw new Error(err.message);
     }
@@ -134,7 +121,7 @@ const trimListInRedis = async (key, start = 0, end = -1) => {
 
 const removeElementFromListInRedis = async (key, element, count = 0) => {
     try {
-        await redisClient.lremAsync(key, count, element);
+        return redisClient.lremAsync(key, count, element);
     } catch (err) {
         throw new Error(err.message);
     }

@@ -4,10 +4,10 @@ const sqs = new AWS.SQS({
     apiVersion: '2012-11-05',
     region: process.env.AWS_REGION
 });
-const sendMessageToQueue = (QueueUrl, url, level, parentUrl, pageCounter) => {
+const sendMessageToQueue = (QueueUrl, url, level, parentUrl) => {
     const workerId = process.env.WORKER_ID || 0;
     // workerId and pageCounter should suffice (but the more info the less it is likely that the id will be a duplicate)
-    let MessageDeduplicationId = `${url.slice(4)}${level}${workerId}${pageCounter + 1}${Math.random().toString(36).substr(2, 9)}`;
+    let MessageDeduplicationId = `${url.slice(4)}${level}${workerId}S${Math.random().toString(36).substr(2, 9)}`;
     // Removes all non alphanumeric and punctuation characters
     MessageDeduplicationId = MessageDeduplicationId.replace(/[^.,\/#!$%\^&\*;:{}=\-_`~()\w]/g, '');
     let messageIdLen = MessageDeduplicationId.length;
@@ -47,12 +47,12 @@ const pollMessagesFromQueue = async (QueueUrl, MaxNumberOfMessages = 10) => {
             //     "MessageGroupId"
             // ],
             VisibilityTimeout: 120,
-            WaitTimeSeconds: 10
+            WaitTimeSeconds: 5
         }).promise();
 
         return Messages || [];
     } catch (err) {
-        console.log(err);
+        console.log(err.message);
         throw new Error(err);
     }
 }

@@ -1,32 +1,16 @@
 const {
-    getHashValFromRedis,
     getStrValFromRedis,
     setStrWithExInRedis,
     appendElementsToListInRedis,
-    getElementsFromListInRedis
+    incHashIntValInRedis
 } = require('../utils/redis');
 const getPageInfo = require('./cheerio');
 
-const getHasReachedMaxLevel = async (maxDepth, currLevel = -1, queueRedisHashKey, levelField) => {
-    if (!maxDepth) return false;
-    try {
-        if (currLevel === -1) currLevel = await getHashValFromRedis(queueRedisHashKey, levelField);
-        return parseInt(currLevel) >= maxDepth;
-    } catch(err) { return false; }
-}
-
-const getHasReachedMaxPages = async (maxPages, pageCounter = -1, queueRedisHashKey, pageCounterField) => {
-    if (!maxPages) return false;
-    try {
-        if (pageCounter === -1) pageCounter = await getHashValFromRedis(queueRedisHashKey, pageCounterField);
-        return parseInt(pageCounter) >= maxPages;
-    } catch (err) { return false; }
-}
-
 const getLinksAndAddPageToTree = async (message, crawlInfo) => {
-    const { url: messageUrl, level: messageLevel, parentUrl } = message;
+    const { messageUrl, messageLevel, parentUrl } = message;
     try {
         // Get page from db, and if it doesn't exist than create it and save it on db
+        console.log(messageUrl, message);
         let page = await getStrValFromRedis(messageUrl);
         if (!page) {
             page = await getPageInfo(messageUrl);
@@ -37,26 +21,15 @@ const getLinksAndAddPageToTree = async (message, crawlInfo) => {
             title: page.title,
             level: messageLevel,
             url: messageUrl,
-            parentUrl
+            children: [],
+            parentUrl,
+            linksLength: page.links.length,
+            childrenCounter: 0
         };
-        if (!crawlInfo.hasReachedLimit) newPageObj.children = page.error || [];
 
-        // Checks if the link has already been processed or is currently being processed
-        // to avoid having duplicate sub trees inside the main tree (at any level)
-        if (!crawlInfo.hasReachedLimit && page.links.length !== 0) {
-            const getTreePromise = getHashValFromRedis(crawlInfo.queueRedisHashKey, crawlInfo.queueHashFields[4]);
-            const getNewPagesPromise = getElementsFromListInRedis(crawlInfo.treeRedisListKey, 0, -1);
-            await Promise.allSettled([getTreePromise, getNewPagesPromise])
-            .then((values) => {
-                if (values[0].value.includes(`"url":"${messageUrl}"`) ||
-                values[1].value.some(p => p.includes(`"url":"${messageUrl}"`))) {
-                    if (!!newPageObj.children) delete newPageObj.children;
-                    page.links = [];
-                }
-            });
-        }
-        
         appendElementsToListInRedis(crawlInfo.treeRedisListKey, [JSON.stringify(newPageObj)]);
+        // Add the links length to the hash key of the next level links length (for the API/main server to use)
+        incHashIntValInRedis(crawlInfo.crawlRedisHashKey, crawlInfo.redisHashFields[4], page.links.length);
 
         return page.links;
     } catch (err) {
@@ -65,8 +38,4 @@ const getLinksAndAddPageToTree = async (message, crawlInfo) => {
     }
 }
 
-module.exports = {
-    getHasReachedMaxLevel,
-    getHasReachedMaxPages,
-    getLinksAndAddPageToTree
-}
+module.exports = getLinksAndAddPageToTree;
