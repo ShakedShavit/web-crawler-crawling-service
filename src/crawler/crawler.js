@@ -42,7 +42,6 @@ const sendNewMessages = async (messageUrl, messageLevel, nextQueueUrl, links = [
     try {
         for (let link of links)
             sendMessageToQueue(nextQueueUrl, link, messageLevel + 1, messageUrl)
-            .then(() => arr.push(link))
             .catch((err) => { throw new Error(err.message); });
     } catch (err) {
         throw new Error(err.message);
