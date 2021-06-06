@@ -44,13 +44,8 @@ const startCrawlingProcess = async () => {
                 'nextQueueUrl',
                 'nextLvlLinksLen'
             ],
-            //hasReachedMaxLevel: false,
-            //hasReachedMaxPages: false,
-            
             get crawlRedisHashKey() { return `workers:${this.crawlName}`; },
-            //get currProcessingRedisListKey() { return `curr-processes-list:${this.crawlName}`; },
             get treeRedisListKey() { return `pages-list:${this.crawlName}`; },
-            //getQueueUrl(currLevel) { return this.crawlName + `${currLevel}`; }
         };
 
         try {

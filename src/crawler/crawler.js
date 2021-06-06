@@ -1,19 +1,11 @@
 const {
     doesKeyExistInRedis,
-    getHashValuesFromRedis,
-    getHashValFromRedis,
-    incHashIntValInRedis,
-    setHashStrValInRedis,
-    appendElementsToListInRedis,
-    getElementsFromListInRedis,
-    trimListInRedis,
-    removeElementFromListInRedis
+    getHashValuesFromRedis
 } = require('../utils/redis');
 const {
     sendMessageToQueue,
     pollMessagesFromQueue,
-    deleteMessagesFromQueue,
-    deleteMessagesBatchFromQueue
+    deleteMessagesFromQueue
 } = require('../utils/sqs');
 const getLinksAndAddPageToTree = require('../crawler/utils');
 
@@ -46,19 +38,20 @@ const getLinksAndAddPageToTree = require('../crawler/utils');
 //      the entire tree of the queueUrl is saved (in the form of JSON)
 //}
 
-let arr = [];
-
 const sendNewMessages = async (messageUrl, messageLevel, nextQueueUrl, links = []) => {
-    console.log("\n", messageUrl, links.length);
-    for (let link of links)
-        sendMessageToQueue(nextQueueUrl, link, messageLevel + 1, messageUrl)
-        .then(() => arr.push(link));
+    try {
+        for (let link of links)
+            sendMessageToQueue(nextQueueUrl, link, messageLevel + 1, messageUrl)
+            .then(() => arr.push(link))
+            .catch((err) => { throw new Error(err.message); });
+    } catch (err) {
+        throw new Error(err.message);
+    }
 }
 
 const crawl = async (crawlInfo) => {
     const crawlRedisHashKey = crawlInfo.crawlRedisHashKey;
     const redisHashFields = crawlInfo.redisHashFields;
-    arr = []
     try {
         do {
             let doesQueueHashExist = await doesKeyExistInRedis(crawlRedisHashKey);
@@ -67,22 +60,15 @@ const crawl = async (crawlInfo) => {
             // If other crawlers finished the scraping
             let [currQueueUrl, nextQueueUrl, isCrawlingDone] = await getHashValuesFromRedis(crawlRedisHashKey, [redisHashFields[2], redisHashFields[3], redisHashFields[0]]);
             if (isCrawlingDone === "true") break;
-            console.log(currQueueUrl);
-            //if (isCrawlingDone === 'true') break; // Exit condition
-            // let currLevel = await getHashValFromRedis(crawlRedisHashKey, redisHashFields[1]);
+
             let messages;
             try { messages = await pollMessagesFromQueue(currQueueUrl, 10); }
             catch (error) {
                 await new Promise(resolve => setTimeout(resolve, 1500));
                 continue;
             }
-            //if (messages.length === 0) {
-                //let workersProcessingQueue = await getElementsFromListInRedis(crawlInfo.currProcessingRedisListKey, 0, -1);
-                //if (workersProcessingQueue?.length > 0) continue;
-                //await setHashStrValInRedis(crawlRedisHashKey, redisHashFields[0], 'true');
-            //}
+
             deleteMessagesFromQueue(currQueueUrl, messages);
-            //await appendElementsToListInRedis(crawlInfo.currProcessingRedisListKey, [`${process.env.WORKER_ID}`]);
 
             for (let message of messages) {
                 let messageUrl = message.Body;
@@ -91,18 +77,14 @@ const crawl = async (crawlInfo) => {
                 getLinksAndAddPageToTree({ messageUrl, messageLevel, parentUrl }, crawlInfo)
                 .then(links => {
                     if (links.length !== 0) {
-                        if (!!nextQueueUrl) sendNewMessages(messageUrl, messageLevel, nextQueueUrl, links);
-                        // .then(() => removeElementFromListInRedis(crawlInfo.currProcessingRedisListKey, `${process.env.WORKER_ID}`, 1));
-                    } // else {
-                        // removeElementFromListInRedis(crawlInfo.currProcessingRedisListKey, `${process.env.WORKER_ID}`, 1);
-                    // }
+                        if (!!nextQueueUrl) 
+                            sendNewMessages(messageUrl, messageLevel, nextQueueUrl, links)
+                            .catch((err) => { throw new Error(err.message); })
+                    }
                 });
             }
         } while (true);
-        console.log("arr", arr);
-    } catch (err) { 
-        console.log("arr", arr);
-        throw new Error(err); } // Would cause re-crawling with new queue
+    } catch (err) { throw new Error(err); } // Would cause re-crawling with new queue
 }
 
 module.exports = crawl;
