@@ -2,9 +2,9 @@ const {
     getStrValFromRedis,
     setStrWithExInRedis,
     appendElementsToListInRedis,
-    incHashIntValInRedis
-} = require('../utils/redis');
-const getPageInfo = require('./cheerio');
+    incHashIntValInRedis,
+} = require("../utils/redis");
+const getPageInfo = require("./cheerio");
 
 const getLinksAndAddPageToTree = async (message, crawlInfo) => {
     const { messageUrl, messageLevel, parentUrl } = message;
@@ -24,18 +24,22 @@ const getLinksAndAddPageToTree = async (message, crawlInfo) => {
             children: [],
             parentUrl,
             linksLength: page.links.length,
-            childrenCounter: 0
+            childrenCounter: 0,
         };
 
         appendElementsToListInRedis(crawlInfo.treeRedisListKey, [JSON.stringify(newPageObj)]);
         // Add the links length to the hash key of the next level links length (for the API/main server to use)
-        incHashIntValInRedis(crawlInfo.crawlRedisHashKey, crawlInfo.redisHashFields[4], page.links.length);
+        incHashIntValInRedis(
+            crawlInfo.crawlRedisHashKey,
+            crawlInfo.redisHashFields[4],
+            page.links.length
+        );
 
         return page.links;
     } catch (err) {
         console.log(err);
         return [];
     }
-}
+};
 
 module.exports = getLinksAndAddPageToTree;
